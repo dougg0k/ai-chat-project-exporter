@@ -18,8 +18,7 @@ AI Chat / Projects Exporter is a local-first browser extension for exporting AI 
 
 ## Why I built the extension
 
-- I found many issues after trying out the best options available, at least in Firefox, where they would not contain / extract all the content, like canvas or some outputs from bigger models.
-- There was no way to pre-set a specific path to save files, the options required multiple clicks to extract a single chat.
+- I found many issues after trying out the best options available, at least in Firefox, where they would not contain / extract all the content, like canvas, docuemnts, or some outputs from bigger models.
 - I noticed that most of the problems were due to the other extensions using CSS Selectors / DOM to extract information.
 - They didnt include relevant information in extracted file. some showed as popup on each extraction instead.
 - I needed this kind of tool for information extraction.
@@ -34,17 +33,8 @@ All exported content is generated and saved locally on the user's machine, or co
 
 The extension only stores local configuration needed for usability.
 
-## Supported platforms
+## Platforms
 
 - ChatGPT (incl projects)
 - Claude (incl projects)
 - Gemini (not supported)
-
-## Future (Maybe)
-
-- I may consider adding per input/output selection, so, the user can select only the ones it would want, to exclude bad ones.
-  - By default, all questions + answers selected.
-  - Could be a modal after clicking on "Select content to export" from Export button
-  - If so, each would contain a small summarized part of each question + answer.
-  - The modal could also contain a Select All or None
-  - Each would question + answer would have a checkbox.
