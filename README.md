@@ -1,6 +1,6 @@
 # AI Chat / Projects Exporter
 
-AI Chat / Projects Exporter is a local-first browser extension for exporting AI chat conversations from ChatGPT, and Claude.
+AI Chat / Projects Exporter is a local-first browser extension for exporting AI chat conversations from ChatGPT, and Claude. Including the Canvas / Documents.
 
 > Note: This project were built entirely with AI as proof of concept, but it works.
 
@@ -8,6 +8,7 @@ AI Chat / Projects Exporter is a local-first browser extension for exporting AI 
 
 - Use JSON responses rather than using DOM to retrieve content, to prevent content from not being included, when from different models or AI functionality, like Canvas.
 - Export to Markdown or HTML.
+- It may use an additional tab when exporting entire projects. You will see status indicator on the popup or float button.
 
 ## Why I built the extension
 
