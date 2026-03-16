@@ -12,16 +12,16 @@ AI Chat / Projects Exporter is a local-first browser extension for exporting AI 
 
 ## Implemention
 
-- Use JSON responses rather than using DOM to retrieve content, to prevent content from not being included, when from different models or AI functionality, like Canvas.
+- Use JSON responses rather than using DOM to retrieve content, to prevent content from not being included, when from different models or AI functionality, like Canvas are used.
 - Export to Markdown or HTML.
-- Has selectable content option.
+- Selectable content option.
 - It may use an additional tab when exporting entire projects. You will see status indicator on the popup or float button.
 
 ## Why I built the extension
 
-- I found many issues after trying out the best options available, at least in Firefox, where they would not contain / extract all the content, like canvas, docuemnts, or some outputs from bigger models.
+- I found many issues after trying out the best options available, at least in Firefox, I didnt find any that would contain / extract all the content, like canvas, documents, or some outputs from bigger models.
 - I noticed that most of the problems were due to the other extensions using CSS Selectors / DOM to extract information.
-- They didnt include relevant information in extracted file. some showed as popup on each extraction instead.
+- They didnt include relevant information in extracted file. Some showed as popup on each extraction instead.
 - I needed this kind of tool for information extraction.
 
 ## Privacy Guarantees
