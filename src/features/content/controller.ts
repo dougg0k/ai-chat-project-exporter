@@ -644,7 +644,6 @@ export async function exportProject(format: ExportFormat): Promise<void> {
       }
     }
 
-    zip.file(`${folderName}/manifest.json`, JSON.stringify(buildProjectManifest(activeProject, sorted), null, 2));
     setProjectStatus(`Finalizing: ${capitalizeWord(activeProject.provider)} - ${activeProject.projectName}`);
     const blob = await zip.generateAsync({ type: 'blob' });
     saveBlobAsFile(blob, buildProjectZipFilename(activeProject.projectName, format));

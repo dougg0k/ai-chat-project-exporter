@@ -92,31 +92,6 @@ export function renderConversation(conversation: Conversation, format: ExportFor
   return format === 'html' ? buildHtml(conversation) : buildMarkdown(conversation);
 }
 
-export function buildProjectManifest(project: ProjectListing, conversations: Conversation[]) {
-  return {
-    projectName: project.projectName,
-    provider: project.provider,
-    projectId: project.projectId,
-    chatCount: project.chats.length,
-    exportedCount: conversations.length,
-    chats: project.chats.map((chat) => {
-      const convo = conversations.find((c) => c.id === chat.id);
-      return {
-        id: chat.id,
-        title: chat.title,
-        order: chat.order,
-        createdAt: chat.createdAt ? formatDateTime(chat.createdAt) : null,
-        updatedAt: chat.updatedAt ? formatDateTime(chat.updatedAt) : null,
-        messageCount: convo?.messages.length ?? null,
-        totalCharacters: convo ? convo.messages.reduce((sum, msg) => sum + msg.markdown.length, 0) : null,
-        answerDatetimes: convo
-          ? convo.messages.filter((m) => m.role === 'assistant').map((m) => (m.createdAt ? formatDateTime(m.createdAt) : null))
-          : [],
-      };
-    }),
-  };
-}
-
 function escapeHtml(text: string): string {
   return text
     .replaceAll('&', '&amp;')
