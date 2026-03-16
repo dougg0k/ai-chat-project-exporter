@@ -1,10 +1,10 @@
-# AIChatProj Exporter - Project Specification
+# AI Chat / Project Exporter - Project Specification
 
 Last Updated: 2026/03/12 18:41:59 BRT
 
 ## 1. Purpose
 
-AIChatProj Exporter is a local-first browser extension that exports AI chat conversations and, where possible, project-scoped sets of conversations from ChatGPT and Claude.
+AI Chat / Project Exporter is a local-first browser extension that exports AI chat conversations and, where possible, project-scoped sets of conversations from ChatGPT and Claude.
 
 The design goal is to remain simple while fixing the main reliability problems found in selector-based exporters.
 
