@@ -1,0 +1,31 @@
+{
+  "name": "ai-chat-project-exporter",
+  "private": true,
+  "version": "0.7.2",
+  "type": "module",
+  "scripts": {
+    "postinstall": "wxt prepare",
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "build:firefox": "wxt build -b firefox",
+    "zip": "wxt zip",
+    "zip:firefox": "wxt zip -b firefox"
+  },
+  "dependencies": {
+    "dompurify": "latest",
+    "jszip": "latest",
+    "markdown-it": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@wxt-dev/auto-icons": "latest",
+    "@wxt-dev/module-react": "latest",
+    "typescript": "latest",
+    "wxt": "0.20.19"
+  }
+}
