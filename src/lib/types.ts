@@ -93,6 +93,7 @@ export interface ExportChatMessage {
   type: 'EXPORT_CHAT';
   format: ExportFormat;
   target: 'file' | 'clipboard';
+  selectedMessageIds?: string[];
 }
 
 export interface ExportProjectMessage {
@@ -103,6 +104,7 @@ export interface ExportProjectMessage {
 export interface GetRenderedChatMessage {
   type: 'GET_RENDERED_CHAT';
   format: ExportFormat;
+  selectedMessageIds?: string[];
 }
 
 export interface GetActiveConversationDataMessage {
@@ -113,6 +115,12 @@ export interface GetActiveConversationDataMessage {
 export interface GetActiveProjectDataMessage {
   type: 'GET_ACTIVE_PROJECT_DATA';
   allowNetworkFallback?: boolean;
+}
+
+
+export interface OpenSelectExportModalMessage {
+  type: 'OPEN_SELECT_EXPORT_MODAL';
+  format?: ExportFormat;
 }
 
 export interface CollectProjectListingMessage {
@@ -142,6 +150,7 @@ export type RuntimeMessage =
   | GetRenderedChatMessage
   | GetActiveConversationDataMessage
   | GetActiveProjectDataMessage
+  | OpenSelectExportModalMessage
   | CollectProjectListingMessage
   | CollectProjectConversationsMessage
   | ProjectExportProgressMessage;

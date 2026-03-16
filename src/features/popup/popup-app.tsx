@@ -26,6 +26,7 @@ export function PopupApp() {
   const [activeTabId, setActiveTabId] = React.useState<number | null>(null);
   const [error, setError] = React.useState<string>('');
   const [status, setStatus] = React.useState<string>('');
+  const [loadingSelection, setLoadingSelection] = React.useState(false);
 
   const refreshContext = React.useCallback(async () => {
     if (activeTabId == null) return;
@@ -94,12 +95,12 @@ export function PopupApp() {
     }
   }, [activeTabId]);
 
-  const runChatAction = React.useCallback((target: 'file' | 'clipboard') => {
+  const runChatAction = React.useCallback((target: 'file' | 'clipboard', selectedMessageIds?: string[]) => {
     if (activeTabId == null) return;
     setError('');
 
     if (target === 'clipboard') {
-      void browser.tabs.sendMessage(activeTabId, { type: 'GET_RENDERED_CHAT', format }).then(async (result) => {
+      void browser.tabs.sendMessage(activeTabId, { type: 'GET_RENDERED_CHAT', format, selectedMessageIds }).then(async (result) => {
         if (!result?.ok || typeof result.text !== 'string') {
           setError(result?.error || 'Clipboard failed.');
           return;
@@ -110,8 +111,11 @@ export function PopupApp() {
       return;
     }
 
-    void browser.tabs.sendMessage(activeTabId, { type: 'EXPORT_CHAT', format, target }).then((result) => {
-      if (result?.ok === false) { setError(result.error || 'Chat action failed.'); return; }
+    void browser.tabs.sendMessage(activeTabId, { type: 'EXPORT_CHAT', format, target, selectedMessageIds }).then((result) => {
+      if (result?.ok === false) {
+        setError(result.error || 'Chat action failed.');
+        return;
+      }
       window.close();
     }).catch((err) => setError(err?.message || 'Chat action failed.'));
   }, [activeTabId, format]);
@@ -120,22 +124,40 @@ export function PopupApp() {
     if (activeTabId == null) return;
     setError('');
     void browser.tabs.sendMessage(activeTabId, { type: 'EXPORT_PROJECT', format }).then((result) => {
-      if (result?.ok === false) { setError(result.error || 'Project export failed.'); return; }
+      if (result?.ok === false) {
+        setError(result.error || 'Project export failed.');
+        return;
+      }
       window.close();
     }).catch((err) => setError(err?.message || 'Project export failed.'));
   }, [activeTabId, format]);
 
+  const openSelectionModal = React.useCallback(() => {
+    if (activeTabId == null) return;
+    setError('');
+    setLoadingSelection(true);
+    void browser.tabs.sendMessage(activeTabId, { type: 'OPEN_SELECT_EXPORT_MODAL', format }).then((result) => {
+      if (result?.ok === false) {
+        setError(result.error || 'Failed to open content selector.');
+        return;
+      }
+      window.close();
+    }).catch((err) => setError(err?.message || 'Failed to open content selector.')).finally(() => setLoadingSelection(false));
+  }, [activeTabId, format]);
+
   return (
-    <main style={{ minWidth: 320, padding: 14, fontFamily: 'system-ui, sans-serif' }}>
+    <main style={{ minWidth: 340, padding: 14, fontFamily: 'system-ui, sans-serif' }}>
       <ActionPanel
         pageKind={pageKind}
         format={format}
         onFormatChange={setFormat}
         onExport={pageKind === 'project' ? runProjectAction : () => runChatAction('file')}
+        onSelectContentExport={pageKind === 'chat' ? openSelectionModal : undefined}
         onClipboard={pageKind === 'chat' ? () => runChatAction('clipboard') : undefined}
         onToggleFloating={toggleFloating}
         showFloatingButton={showFloatingButton}
         statusText={status || undefined}
+        disabled={loadingSelection}
       />
       {error && <div style={{ marginTop: 10, fontSize: 12, color: '#b91c1c' }}>{error}</div>}
     </main>

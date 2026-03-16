@@ -1,5 +1,6 @@
 import DOMPurify from 'dompurify';
 import MarkdownIt from 'markdown-it';
+import { deriveConversationTurns } from './chat-selection';
 import type { Conversation, ExportFormat, ProjectListing } from './types';
 
 const md = new MarkdownIt({
@@ -50,13 +51,15 @@ function buildHtmlDocument(title: string, markdown: string): string {
 }
 
 export function buildMarkdown(conversation: Conversation): string {
+  const totalTurns = deriveConversationTurns(conversation).length;
   const lines: string[] = [
     `# ${conversation.title}`,
     '',
     `Platform: ${conversation.provider}`,
     `Source URL: ${conversation.sourceUrl}`,
     `Exported At: ${formatDateTime(conversation.exportedAt)}`,
-    `Total Messages: ${conversation.messages.length}`,
+    `Total Turns: ${totalTurns}`,
+    `Underlying Messages: ${conversation.messages.length}`,
     `Total Characters: ${totalCharacters(conversation)}`,
     '',
   ];

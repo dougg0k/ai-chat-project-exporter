@@ -7,6 +7,7 @@ export interface ActionPanelProps {
   format: ExportFormat;
   onFormatChange: (format: ExportFormat) => void;
   onExport: () => void;
+  onSelectContentExport?: () => void;
   onClipboard?: () => void;
   onToggleFloating?: (value: boolean) => void;
   showFloatingButton?: boolean;
@@ -35,8 +36,11 @@ export function ActionPanel(props: ActionPanelProps) {
       {!supported && <InfoText>Open a supported chat or project page.</InfoText>}
 
       {supported && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           <ActionButton onClick={props.onExport} disabled={props.disabled}>Export</ActionButton>
+          {isChat && props.onSelectContentExport && (
+            <ActionButton onClick={props.onSelectContentExport} disabled={props.disabled}>Select content</ActionButton>
+          )}
           {isChat && props.onClipboard && (
             <ActionButton onClick={props.onClipboard} disabled={props.disabled}>Clipboard</ActionButton>
           )}

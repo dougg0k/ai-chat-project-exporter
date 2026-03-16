@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import { browser } from 'wxt/browser';
 import { buildProjectZipFilename, copyText, saveBlobAsFile, saveTextAsFile, safeFilenamePart } from '../../lib/file';
+import { filterConversationToMessageIds } from '../../lib/chat-selection';
 import { buildProjectManifest } from '../../lib/export-format';
 import { collectObservedApiUrls, initFetchBridge, onRawCapture, pageFetch } from '../../lib/fetch-bridge';
 import {
@@ -538,21 +539,23 @@ export async function getActiveProjectData(_allowNetworkFallback = true): Promis
   return ensureActiveProjectData();
 }
 
-export async function getRenderedChat(format: ExportFormat): Promise<string> {
+export async function getRenderedChat(format: ExportFormat, selectedMessageIds?: string[]): Promise<string> {
   const conversation = await ensureActiveConversationForPage();
   if (!conversation) {
     throw new Error('No chat data available.');
   }
-  return buildConversationBundle(conversation, format).mainContent;
+  const filteredConversation = normalizeSelectedConversation(conversation, selectedMessageIds);
+  return buildConversationBundle(filteredConversation, format).mainContent;
 }
 
-export async function exportChat(format: ExportFormat, target: 'file' | 'clipboard'): Promise<void> {
+export async function exportChat(format: ExportFormat, target: 'file' | 'clipboard', selectedMessageIds?: string[]): Promise<void> {
   const conversation = await ensureActiveConversationForPage();
   if (!conversation) {
     throw new Error('No chat data available.');
   }
 
-  const rendered = buildConversationBundle(conversation, format);
+  const filteredConversation = normalizeSelectedConversation(conversation, selectedMessageIds);
+  const rendered = buildConversationBundle(filteredConversation, format);
   if (target === 'clipboard') {
     await copyText(rendered.mainContent);
     return;
@@ -576,6 +579,15 @@ export async function exportChat(format: ExportFormat, target: 'file' | 'clipboa
   const blob = await zip.generateAsync({ type: 'blob' });
   const bundleName = rendered.mainFilename.replace(/\.(html|md)$/i, `_${format === 'html' ? 'html' : 'md'}.zip`);
   saveBlobAsFile(blob, bundleName);
+}
+
+function normalizeSelectedConversation(conversation: Conversation, selectedMessageIds?: string[]): Conversation {
+  if (!Array.isArray(selectedMessageIds) || selectedMessageIds.length === 0) return conversation;
+  const filteredConversation = filterConversationToMessageIds(conversation, selectedMessageIds);
+  if (filteredConversation.messages.length === 0) {
+    throw new Error('No selected chat content available.');
+  }
+  return filteredConversation;
 }
 
 export async function exportProject(format: ExportFormat): Promise<void> {

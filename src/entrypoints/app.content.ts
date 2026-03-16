@@ -20,16 +20,18 @@ export default defineContentScript({
   runAt: 'document_start',
   main() {
     let mounted = false;
+    let floatingUi: ReturnType<typeof mountFloatingUi> | null = null;
     const initPromise = initializeController();
 
-    const mountIfNeeded = async () => {
+    const mountIfNeeded = async (force = false) => {
       await initPromise;
-      if (!mounted && shouldRenderFloatingButton()) {
+      if (!mounted && (shouldRenderFloatingButton() || force)) {
         mounted = true;
-        mountFloatingUi({
+        floatingUi = mountFloatingUi({
           getContext: getUiContext,
-          onExportChat: async (format) => exportChat(format, 'file'),
-          onCopyChat: async (format) => exportChat(format, 'clipboard'),
+          getActiveConversation: () => getActiveConversationData(true),
+          onExportChat: async (format, selectedMessageIds) => exportChat(format, 'file', selectedMessageIds),
+          onCopyChat: async (format, selectedMessageIds) => exportChat(format, 'clipboard', selectedMessageIds),
           onExportProject: exportProject,
         });
       }
@@ -39,6 +41,13 @@ export default defineContentScript({
     window.addEventListener('popstate', queueRefresh);
     window.addEventListener('hashchange', queueRefresh);
     void mountIfNeeded();
+    const retryMountId = window.setInterval(() => {
+      if (mounted) {
+        window.clearInterval(retryMountId);
+        return;
+      }
+      void mountIfNeeded();
+    }, 1200);
 
     browser.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
       if (
@@ -47,6 +56,7 @@ export default defineContentScript({
         message.type !== 'GET_RENDERED_CHAT' &&
         message.type !== 'GET_ACTIVE_CONVERSATION_DATA' &&
         message.type !== 'GET_ACTIVE_PROJECT_DATA' &&
+        message.type !== 'OPEN_SELECT_EXPORT_MODAL' &&
         message.type !== 'EXPORT_CHAT' &&
         message.type !== 'EXPORT_PROJECT' &&
         message.type !== 'PROJECT_EXPORT_PROGRESS'
@@ -71,7 +81,7 @@ export default defineContentScript({
             return;
           }
           if (message.type === 'GET_RENDERED_CHAT') {
-            sendResponse({ ok: true, text: await getRenderedChat(message.format) });
+            sendResponse({ ok: true, text: await getRenderedChat(message.format, message.selectedMessageIds) });
             return;
           }
           if (message.type === 'GET_ACTIVE_CONVERSATION_DATA') {
@@ -82,8 +92,15 @@ export default defineContentScript({
             sendResponse({ ok: true, project: await getActiveProjectData(message.allowNetworkFallback !== false) });
             return;
           }
+
+          if (message.type === 'OPEN_SELECT_EXPORT_MODAL') {
+            await mountIfNeeded(true);
+            floatingUi?.openSelectionModal(message.format);
+            sendResponse({ ok: true });
+            return;
+          }
           if (message.type === 'EXPORT_CHAT') {
-            await exportChat(message.format, message.target);
+            await exportChat(message.format, message.target, message.selectedMessageIds);
             sendResponse({ ok: true });
             return;
           }
@@ -98,5 +115,7 @@ export default defineContentScript({
       })();
       return true;
     });
+
+    window.addEventListener('beforeunload', () => window.clearInterval(retryMountId), { once: true });
   },
 });
