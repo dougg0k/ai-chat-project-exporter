@@ -2,7 +2,11 @@
 
 AI Chat / Projects Exporter is a local-first browser extension for exporting AI chat conversations from ChatGPT, and Claude. Including the Canvas / Documents.
 
+[![Firefox Addon](firefox-get-the-addon.svg)](https://addons.mozilla.org/en-US/firefox/addon/ai-chat-project-exporter/)
+
 > Note: This project were built entirely with AI as proof of concept, but it works.
+
+> Note2: I didnt publish to Chrome Store, if needed, just run clone the project and run `pnpm i; pnpm build; pnpm zip` and in the `.output` folder, drag-and-drop the `.zip` into chrome extension view, with `Developer Mode` enabled.
 
 ## Implemention
 
