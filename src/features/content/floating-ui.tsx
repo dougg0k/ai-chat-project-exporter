@@ -98,7 +98,11 @@ function FloatingApp(props: {
 	const [busy, setBusy] = React.useState(false);
 	const [selectionConversation, setSelectionConversation] =
 		React.useState<Conversation | null>(null);
+	const [selectionVisible, setSelectionVisible] = React.useState(false);
 	const [selectedTurnIds, setSelectedTurnIds] = React.useState<Set<string>>(
+		new Set(),
+	);
+	const [expandedTurnIds, setExpandedTurnIds] = React.useState<Set<string>>(
 		new Set(),
 	);
 	const [position, setPosition] = React.useState<FloatingButtonPosition | null>(
@@ -129,6 +133,10 @@ function FloatingApp(props: {
 		startY: number;
 		dragging: boolean;
 	} | null>(null);
+	const selectionNavigationCacheRef = React.useRef<Map<string, HTMLElement>>(
+		new Map(),
+	);
+	const selectionConversationSignatureRef = React.useRef<string | null>(null);
 
 	const refresh = React.useCallback(async () => {
 		const next = await props.getContext();
@@ -240,8 +248,18 @@ function FloatingApp(props: {
 					if (!conversation) return;
 					const turns = deriveConversationTurns(conversation);
 					if (turns.length === 0) return;
+					const nextSignature = `${conversation.provider}:${conversation.id}:${conversation.messages.length}`;
+					const shouldReset =
+						selectionConversationSignatureRef.current !== nextSignature;
+
 					setSelectionConversation(conversation);
-					setSelectedTurnIds(new Set(turns.map((turn) => turn.id)));
+					setSelectionVisible(true);
+					if (shouldReset) {
+						selectionConversationSignatureRef.current = nextSignature;
+						selectionNavigationCacheRef.current = new Map();
+						setSelectedTurnIds(new Set(turns.map((turn) => turn.id)));
+						setExpandedTurnIds(new Set());
+					}
 				})
 				.finally(() => setBusy(false));
 		},
@@ -254,12 +272,20 @@ function FloatingApp(props: {
 
 	const closeSelectionModal = React.useCallback(() => {
 		if (busy) return;
-		setSelectionConversation(null);
-		setSelectedTurnIds(new Set());
+		setSelectionVisible(false);
 	}, [busy]);
 
 	const toggleTurn = React.useCallback((turnId: string) => {
 		setSelectedTurnIds((current) => {
+			const next = new Set(current);
+			if (next.has(turnId)) next.delete(turnId);
+			else next.add(turnId);
+			return next;
+		});
+	}, []);
+
+	const toggleExpandedTurn = React.useCallback((turnId: string) => {
+		setExpandedTurnIds((current) => {
 			const next = new Set(current);
 			if (next.has(turnId)) next.delete(turnId);
 			else next.add(turnId);
@@ -286,8 +312,7 @@ function FloatingApp(props: {
 		void props
 			.onExportChat(format, selectedMessageIds)
 			.then(() => {
-				setSelectionConversation(null);
-				setSelectedTurnIds(new Set());
+				setSelectionVisible(false);
 				setOpen(false);
 			})
 			.finally(() => setBusy(false));
@@ -425,12 +450,13 @@ function FloatingApp(props: {
 				</div>
 			)}
 
-			{selectionConversation && (
+			{selectionConversation && selectionVisible && (
 				<SelectExportModal
 					format={format}
 					title={selectionConversation.title}
 					turns={selectionTurns}
 					selectedTurnIds={selectedTurnIds}
+					expandedTurnIds={expandedTurnIds}
 					busy={busy}
 					onClose={closeSelectionModal}
 					onSelectAll={() =>
@@ -438,6 +464,7 @@ function FloatingApp(props: {
 					}
 					onSelectNone={() => setSelectedTurnIds(new Set())}
 					onToggleTurn={toggleTurn}
+					onToggleExpanded={toggleExpandedTurn}
 					onConfirm={confirmSelectionExport}
 				/>
 			)}

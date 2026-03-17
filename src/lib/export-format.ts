@@ -86,6 +86,11 @@ export function buildHtml(conversation: Conversation): string {
 	return buildHtmlDocument(conversation.title, buildMarkdown(conversation));
 }
 
+export function renderMarkdownFragment(markdown: string): string {
+	const renderedHtml = md.render(markdown || "");
+	return DOMPurify.sanitize(renderedHtml);
+}
+
 export function renderStandaloneMarkdownHtml(
 	title: string,
 	markdown: string,

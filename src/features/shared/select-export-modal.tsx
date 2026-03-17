@@ -1,5 +1,6 @@
-import type React from "react";
+import * as React from "react";
 import type { ExportFormat } from "../../lib/types";
+import { renderMarkdownFragment } from "../../lib/export-format";
 import type { ConversationTurn } from "../../lib/chat-selection";
 
 export interface SelectExportModalProps {
@@ -7,11 +8,13 @@ export interface SelectExportModalProps {
 	title: string;
 	turns: ConversationTurn[];
 	selectedTurnIds: Set<string>;
+	expandedTurnIds: Set<string>;
 	busy?: boolean;
 	onClose: () => void;
 	onSelectAll: () => void;
 	onSelectNone: () => void;
 	onToggleTurn: (turnId: string) => void;
+	onToggleExpanded: (turnId: string) => void;
 	onConfirm: () => void;
 }
 
@@ -22,6 +25,7 @@ export function SelectExportModal(props: SelectExportModalProps) {
 
 	return (
 		<div style={overlayStyle}>
+			<style>{richDetailCss}</style>
 			<div
 				style={modalStyle}
 				role="dialog"
@@ -69,6 +73,16 @@ export function SelectExportModal(props: SelectExportModalProps) {
 							Current format:{" "}
 							<strong>{props.format === "html" ? "HTML" : "Markdown"}</strong>
 						</div>
+						<div
+							style={{
+								fontSize: 12,
+								color: "#6b7280",
+								lineHeight: 1.45,
+								marginTop: 6,
+							}}
+						>
+							Selections stay in this tab while the current page remains open.
+						</div>
 					</div>
 					<button
 						type="button"
@@ -101,41 +115,66 @@ export function SelectExportModal(props: SelectExportModalProps) {
 				<div style={listStyle}>
 					{props.turns.map((turn) => {
 						const checked = props.selectedTurnIds.has(turn.id);
+						const expanded = props.expandedTurnIds.has(turn.id);
 						return (
-							<label
+							<div
 								key={turn.id}
+								role="button"
+								tabIndex={0}
+								onClick={() => props.onToggleTurn(turn.id)}
+								onKeyDown={(event) => {
+									if (event.key !== "Enter" && event.key !== " ") return;
+									event.preventDefault();
+									props.onToggleTurn(turn.id);
+								}}
 								style={{
 									...turnCardStyle,
 									borderColor: checked ? "#111827" : "rgba(15,23,42,0.12)",
 									background: checked ? "rgba(17,24,39,0.03)" : "#fff",
 								}}
 							>
-								<input
-									type="checkbox"
-									checked={checked}
-									onChange={() => props.onToggleTurn(turn.id)}
-									style={{
-										marginTop: 2,
-										width: 16,
-										height: 16,
-										flex: "0 0 auto",
-									}}
-								/>
-								<div style={{ minWidth: 0, flex: 1 }}>
-									<div
+								<div
+									style={{ display: "flex", gap: 12, alignItems: "flex-start" }}
+								>
+									<input
+										type="checkbox"
+										checked={checked}
+										onChange={() => props.onToggleTurn(turn.id)}
+										onClick={(event) => event.stopPropagation()}
 										style={{
-											fontSize: 12,
-											fontWeight: 700,
-											color: "#111",
-											marginBottom: 6,
+											marginTop: 2,
+											width: 16,
+											height: 16,
+											flex: "0 0 auto",
 										}}
-									>
-										Turn {turn.index}
+									/>
+									<div style={{ minWidth: 0, flex: 1 }}>
+										<div
+											style={{
+												fontSize: 12,
+												fontWeight: 700,
+												color: "#111",
+												marginBottom: 6,
+											}}
+										>
+											Turn {turn.index}
+										</div>
+										<PreviewBlock label="Prompt" text={turn.userPreview} />
+										<PreviewBlock label="Answer" text={turn.assistantPreview} />
+										<div style={rowActionsStyle}>
+											<RowButton
+												onClick={(event) => {
+													event.stopPropagation();
+													props.onToggleExpanded(turn.id);
+												}}
+											>
+												{expanded ? "Hide details" : "Full details"}
+											</RowButton>
+										</div>
+										{expanded ? <TurnDetails turn={turn} /> : null}
 									</div>
-									<PreviewBlock label="Prompt" text={turn.userPreview} />
-									<PreviewBlock label="Answer" text={turn.assistantPreview} />
 								</div>
-							</label>
+							</div>
 						);
 					})}
 				</div>
@@ -149,7 +188,7 @@ export function SelectExportModal(props: SelectExportModalProps) {
 					}}
 				>
 					<FooterButton onClick={props.onClose} disabled={props.busy}>
-						Cancel
+						Close
 					</FooterButton>
 					<FooterButton
 						onClick={props.onConfirm}
@@ -160,6 +199,15 @@ export function SelectExportModal(props: SelectExportModalProps) {
 					</FooterButton>
 				</div>
 			</div>
+		</div>
+	);
+}
+
+function TurnDetails(props: { turn: ConversationTurn }) {
+	return (
+		<div style={detailsWrapStyle}>
+			<DetailBlock label="Prompt details" text={props.turn.userDetail} />
+			<DetailBlock label="Answer details" text={props.turn.assistantDetail} />
 		</div>
 	);
 }
@@ -193,6 +241,34 @@ function PreviewBlock(props: { label: string; text: string }) {
 	);
 }
 
+function DetailBlock(props: { label: string; text: string }) {
+	const html = React.useMemo(
+		() => renderMarkdownFragment(props.text || "").replace(/>\s+</g, "><"),
+		[props.text],
+	);
+
+	return (
+		<div style={{ marginTop: 10 }}>
+			<div
+				style={{
+					fontSize: 11,
+					fontWeight: 700,
+					color: "#4b5563",
+					marginBottom: 4,
+				}}
+			>
+				{props.label}
+			</div>
+			<div style={detailTextStyle}>
+				<div
+					className="select-export-modal-rich"
+					dangerouslySetInnerHTML={{ __html: html }}
+				/>
+			</div>
+		</div>
+	);
+}
+
 function SmallButton(props: {
 	onClick: () => void;
 	children: React.ReactNode;
@@ -211,6 +287,17 @@ function SmallButton(props: {
 				fontSize: 12,
 			}}
 		>
+			{props.children}
+		</button>
+	);
+}
+
+function RowButton(props: {
+	onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+	children: React.ReactNode;
+}) {
+	return (
+		<button type="button" onClick={props.onClick} style={rowButtonStyle}>
 			{props.children}
 		</button>
 	);
@@ -258,41 +345,141 @@ const modalStyle: React.CSSProperties = {
 	width: 768,
 	maxWidth: "100%",
 	maxHeight: "min(92vh, 760px)",
-	background: "#fff",
-	borderRadius: 16,
+	overflow: "hidden",
+	borderRadius: 18,
 	border: "1px solid rgba(15,23,42,0.12)",
-	boxShadow: "0 18px 48px rgba(0,0,0,0.18)",
-	padding: 14,
+	background: "#fff",
+	padding: 16,
+	boxShadow: "0 20px 50px rgba(0,0,0,0.28)",
 	display: "flex",
 	flexDirection: "column",
 };
 
 const listStyle: React.CSSProperties = {
-	overflowY: "auto",
-	maxHeight: "min(64vh, 520px)",
-	paddingRight: 2,
+	overflow: "auto",
+	paddingRight: 4,
+	display: "flex",
+	flexDirection: "column",
+	gap: 10,
 };
 
 const turnCardStyle: React.CSSProperties = {
-	display: "flex",
-	alignItems: "flex-start",
-	gap: 10,
-	padding: 12,
-	borderRadius: 12,
 	border: "1px solid rgba(15,23,42,0.12)",
+	borderRadius: 12,
+	padding: 12,
 	cursor: "pointer",
-	marginBottom: 8,
+	boxSizing: "border-box",
 };
 
 const closeButtonStyle: React.CSSProperties = {
+	width: 32,
+	height: 32,
+	borderRadius: 999,
+	border: "1px solid rgba(15,23,42,0.12)",
+	background: "#fff",
+	color: "#111",
+	fontSize: 20,
+	lineHeight: 1,
+	cursor: "pointer",
+	flex: "0 0 auto",
+};
+
+const rowActionsStyle: React.CSSProperties = {
+	display: "flex",
+	flexWrap: "wrap",
+	gap: 8,
+	marginTop: 10,
+};
+
+const rowButtonStyle: React.CSSProperties = {
+	padding: "6px 10px",
+	borderRadius: 8,
 	border: "1px solid rgba(15,23,42,0.14)",
 	background: "#fff",
 	color: "#111",
-	borderRadius: 10,
-	width: 32,
-	height: 32,
 	cursor: "pointer",
-	fontSize: 20,
-	lineHeight: 1,
-	flex: "0 0 auto",
+	fontSize: 12,
 };
+
+const detailsWrapStyle: React.CSSProperties = {
+	marginTop: 10,
+	padding: 10,
+	borderRadius: 10,
+	background: "rgba(15,23,42,0.035)",
+	border: "1px solid rgba(15,23,42,0.08)",
+};
+
+const detailTextStyle: React.CSSProperties = {
+	fontSize: 12,
+	color: "#111",
+	lineHeight: 1.5,
+	whiteSpace: "normal",
+	overflowWrap: "anywhere",
+	wordBreak: "break-word",
+	maxHeight: 220,
+	overflow: "auto",
+	padding: "8px 10px",
+	borderRadius: 8,
+	background: "#fff",
+	border: "1px solid rgba(15,23,42,0.08)",
+};
+
+const noticeStyle: React.CSSProperties = {
+	fontSize: 12,
+	color: "#92400e",
+	background: "#fffbeb",
+	border: "1px solid #fcd34d",
+	borderRadius: 10,
+	padding: "8px 10px",
+	marginBottom: 10,
+	lineHeight: 1.45,
+};
+const richDetailCss = `
+.select-export-modal-rich {
+	white-space: normal;
+}
+.select-export-modal-rich > :first-child {
+	margin-top: 0 !important;
+}
+.select-export-modal-rich > :last-child {
+	margin-bottom: 0 !important;
+}
+.select-export-modal-rich p,
+.select-export-modal-rich ul,
+.select-export-modal-rich ol,
+.select-export-modal-rich blockquote,
+.select-export-modal-rich pre {
+	margin: 0 0 0.6em 0;
+}
+.select-export-modal-rich ul,
+.select-export-modal-rich ol {
+	padding-left: 1.25em;
+}
+.select-export-modal-rich li + li {
+	margin-top: 0.2em;
+}
+.select-export-modal-rich h1,
+.select-export-modal-rich h2,
+.select-export-modal-rich h3,
+.select-export-modal-rich h4,
+.select-export-modal-rich h5,
+.select-export-modal-rich h6 {
+	margin: 0 0 0.45em 0;
+	line-height: 1.35;
+}
+.select-export-modal-rich pre {
+	white-space: pre-wrap;
+	overflow-x: auto;
+	padding: 8px 10px;
+	border-radius: 8px;
+	background: rgba(15, 23, 42, 0.04);
+}
+.select-export-modal-rich code {
+	overflow-wrap: anywhere;
+}
+.select-export-modal-rich hr {
+	margin: 0.75em 0;
+	border: 0;
+	border-top: 1px solid rgba(15, 23, 42, 0.1);
+}
+`;
