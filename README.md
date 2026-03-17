@@ -15,7 +15,7 @@ AI Chat / Projects Exporter is a local-first browser extension for exporting AI 
 - Use JSON responses rather than using DOM to retrieve content, to prevent content from not being included, when from different models or AI functionality, like Canvas are used.
 - Export to Markdown or HTML.
 - Selectable content option.
-- A project (only) or a single chat, and both that contain canvas or documents (if a project, from each chat within) are exported to a single zip file.
+- A project (only) or a single chat that contain canvas or documents (if a project, from each chat within) are exported to a single zip file.
 - It may use an additional tab when exporting entire projects. You will see status indicator on the popup or float button.
 
 ## Why I built the extension
