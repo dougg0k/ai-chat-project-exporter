@@ -1,5 +1,6 @@
 export const APP_SOURCE = 'ai-chat-project-exporter';
 export const FLOATING_VISIBILITY_KEY = 'showFloatingExportButton';
+export const FLOATING_POSITIONS_KEY = 'floatingExportButtonPositions';
 export const EXPORT_FORMAT_KEY = 'preferredExportFormat';
 export const DEFAULT_EXPORT_FORMAT = 'markdown';
 export const CLAUDE_ORG_ID_KEY = 'lastClaudeOrgId';
