@@ -1,9 +1,9 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import { PopupApp } from '../../features/popup/popup-app';
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { PopupApp } from "../../features/popup/popup-app";
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <PopupApp />
-  </React.StrictMode>,
+ReactDOM.createRoot(document.getElementById("root")!).render(
+	<React.StrictMode>
+		<PopupApp />
+	</React.StrictMode>,
 );

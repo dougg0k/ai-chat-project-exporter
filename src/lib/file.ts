@@ -1,42 +1,59 @@
 export function safeFilenamePart(value: string): string {
-  return value
-    .replace(/[\/:*?"<>|]+/g, '-')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 120);
+	return value
+		.replace(/[/:*?"<>|]+/g, "-")
+		.replace(/\s+/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-|-$/g, "")
+		.slice(0, 120);
 }
 
-export function buildConversationFilename(title: string, provider: string, ext: string, now = new Date()): string {
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const hh = String(now.getHours()).padStart(2, '0');
-  const mi = String(now.getMinutes()).padStart(2, '0');
-  return `${safeFilenamePart(title)}_${provider}_chat-export_${yyyy}-${mm}-${dd}_${hh}-${mi}.${ext}`;
+export function buildConversationFilename(
+	title: string,
+	provider: string,
+	ext: string,
+	now: Date,
+): string {
+	return `${safeFilenamePart(title)}_${provider}_chat-export_${buildDateTime(now)}.${ext}`;
 }
 
-export function buildProjectZipFilename(projectName: string, format: 'markdown' | 'html'): string {
-  const suffix = format === 'html' ? '_html' : '_md';
-  return `${safeFilenamePart(projectName)}${suffix}.zip`;
+export function buildProjectZipFilename(
+	projectName: string,
+	format: "markdown" | "html",
+	now: Date,
+): string {
+	const suffix = format === "html" ? "_html" : "_md";
+	return `${safeFilenamePart(projectName)}_${buildDateTime(now)}${suffix}.zip`;
 }
 
-export function saveTextAsFile(text: string, filename: string, mimeType: string): void {
-  saveBlobAsFile(new Blob([text], { type: mimeType }), filename);
+export function buildDateTime(now = new Date()) {
+	const yyyy = now.getFullYear();
+	const mm = String(now.getMonth() + 1).padStart(2, "0");
+	const dd = String(now.getDate()).padStart(2, "0");
+	const hh = String(now.getHours()).padStart(2, "0");
+	const mi = String(now.getMinutes()).padStart(2, "0");
+	return `${yyyy}-${mm}-${dd}_${hh}-${mi}`;
+}
+
+export function saveTextAsFile(
+	text: string,
+	filename: string,
+	mimeType: string,
+): void {
+	saveBlobAsFile(new Blob([text], { type: mimeType }), filename);
 }
 
 export function saveBlobAsFile(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.style.display = 'none';
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+	const url = URL.createObjectURL(blob);
+	const anchor = document.createElement("a");
+	anchor.href = url;
+	anchor.download = filename;
+	anchor.style.display = "none";
+	document.body.append(anchor);
+	anchor.click();
+	anchor.remove();
+	setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 export async function copyText(text: string): Promise<void> {
-  await navigator.clipboard.writeText(text);
+	await navigator.clipboard.writeText(text);
 }
