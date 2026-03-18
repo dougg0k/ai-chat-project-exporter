@@ -2,22 +2,24 @@ import { defineBackground } from "wxt/utils/define-background";
 import { browser } from "wxt/browser";
 import { buildProjectChatPageUrls } from "../lib/page-context";
 import { parseConversation, parseProjectListing } from "../lib/parser";
-import { mergeChatGptTextdocs, parseChatGptTextdocs } from "../lib/parser-chatgpt";
+import { replaceConversationTextdocs } from "../lib/chatgpt-textdocs";
+import { parseChatGptTextdocs } from "../lib/parser-chatgpt";
 import { mergeProjectListings, projectListingSignature } from "../lib/project-listing";
 import type {
 	CollectProjectConversationsMessage,
 	CollectProjectListingMessage,
+	ContentReadyMessage,
 	Conversation,
 	GetActiveConversationDataMessage,
 	GetActiveProjectDataMessage,
 	ProjectListing,
 	RawCaptureMessage,
 	RuntimeMessage,
+	UiContextChangedMessage,
 } from "../lib/types";
 
 const TAB_URL_TIMEOUT_MS = 15000;
 const CAPTURE_TIMEOUT_MS = 25000;
-const POLL_INTERVAL_MS = 300;
 
 type SenderResponse = {
 	ok: boolean;
@@ -26,16 +28,35 @@ type SenderResponse = {
 	conversations?: Conversation[];
 };
 
+type TabSignal = "raw-capture" | "content-ready" | "ui-context-changed" | "tab-updated";
+
+type Waiter = {
+	resolve: (signal: TabSignal) => void;
+	timeoutId: ReturnType<typeof setTimeout>;
+};
+
 const conversationsByTab = new Map<number, Conversation | null>();
 const projectsByTab = new Map<number, ProjectListing | null>();
 const pendingChatGptTextdocsByTab = new Map<number, Map<string, import("../lib/types").ChatGptTextdoc[]>>();
 const observedChatGptTextdocsByTab = new Map<number, Set<string>>();
+const contentReadyUrlsByTab = new Map<number, string>();
+const waitersByTab = new Map<number, Set<Waiter>>();
 
 export default defineBackground(() => {
 	browser.runtime.onMessage.addListener(
 		(message: RuntimeMessage, sender, sendResponse) => {
 			if (message.type === "RAW_CAPTURE") {
 				recordRawCapture(message, sender.tab?.id, sender.tab?.url);
+				return undefined;
+			}
+
+			if (message.type === "CONTENT_READY") {
+				recordContentReady(message, sender.tab?.id);
+				return undefined;
+			}
+
+			if (message.type === "UI_CONTEXT_CHANGED") {
+				notifyTabWaiters(sender.tab?.id, "ui-context-changed");
 				return undefined;
 			}
 
@@ -56,9 +77,13 @@ export default defineBackground(() => {
 			return undefined;
 		},
 	);
+
+	browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+		if (changeInfo.status === "complete" || typeof changeInfo.url === "string") {
+			notifyTabWaiters(tabId, "tab-updated");
+		}
+	});
 });
-
-
 
 function markObservedConversationTextdocs(tabId: number, conversationId: string) {
 	const observed = observedChatGptTextdocsByTab.get(tabId) ?? new Set<string>();
@@ -78,11 +103,15 @@ function stashPendingConversationTextdocs(
 	const byConversation =
 		pendingChatGptTextdocsByTab.get(tabId) ??
 		new Map<string, import("../lib/types").ChatGptTextdoc[]>();
-	byConversation.set(
-		conversationId,
-		mergeChatGptTextdocs(byConversation.get(conversationId), textdocs) ?? [],
-	);
+	byConversation.set(conversationId, [...textdocs]);
 	pendingChatGptTextdocsByTab.set(tabId, byConversation);
+}
+
+function clearPendingConversationTextdocs(tabId: number, conversationId: string) {
+	const byConversation = pendingChatGptTextdocsByTab.get(tabId);
+	if (!byConversation) return;
+	byConversation.delete(conversationId);
+	if (byConversation.size === 0) pendingChatGptTextdocsByTab.delete(tabId);
 }
 
 function applyPendingConversationTextdocs(
@@ -91,31 +120,11 @@ function applyPendingConversationTextdocs(
 ): Conversation {
 	if (conversation.provider !== "chatgpt") return conversation;
 	const byConversation = pendingChatGptTextdocsByTab.get(tabId);
-	const pending = byConversation?.get(conversation.id);
-	if (!pending?.length) return conversation;
-	byConversation?.delete(conversation.id);
-	if (byConversation && byConversation.size === 0)
-		pendingChatGptTextdocsByTab.delete(tabId);
-	return mergeConversationTextdocs(conversation, conversation.id, pending);
-}
-
-function mergeConversationTextdocs(
-	conversation: Conversation,
-	conversationId: string,
-	textdocs: import("../lib/types").ChatGptTextdoc[],
-): Conversation {
-	if (conversation.provider !== "chatgpt") return conversation;
-	if (conversation.id !== conversationId) {
-		const sourceMatch = conversation.sourceUrl?.match(/\/c\/([A-Za-z0-9-]+)$/);
-		if (sourceMatch?.[1] !== conversationId) return conversation;
-	}
-	return {
-		...conversation,
-		chatGptTextdocs: mergeChatGptTextdocs(
-			conversation.chatGptTextdocs,
-			textdocs,
-		),
-	};
+	if (!byConversation?.has(conversation.id)) return conversation;
+	const pending = byConversation.get(conversation.id) ?? [];
+	byConversation.delete(conversation.id);
+	if (byConversation.size === 0) pendingChatGptTextdocsByTab.delete(tabId);
+	return replaceConversationTextdocs(conversation, conversation.id, pending);
 }
 
 async function respondAsync(
@@ -150,15 +159,16 @@ function recordRawCapture(
 		markObservedConversationTextdocs(tabId, textdocs.conversationId);
 		const existing = conversationsByTab.get(tabId);
 		if (existing) {
-			const merged = mergeConversationTextdocs(
+			const updated = replaceConversationTextdocs(
 				existing,
 				textdocs.conversationId,
 				textdocs.textdocs,
 			);
-			if (merged === existing) {
-				stashPendingConversationTextdocs(tabId, textdocs.conversationId, textdocs.textdocs);
+			if (updated !== existing) {
+				conversationsByTab.set(tabId, updated);
+				clearPendingConversationTextdocs(tabId, textdocs.conversationId);
 			} else {
-				conversationsByTab.set(tabId, merged);
+				stashPendingConversationTextdocs(tabId, textdocs.conversationId, textdocs.textdocs);
 			}
 		} else {
 			stashPendingConversationTextdocs(tabId, textdocs.conversationId, textdocs.textdocs);
@@ -172,6 +182,13 @@ function recordRawCapture(
 				: project;
 		projectsByTab.set(tabId, nextProject);
 	}
+	notifyTabWaiters(tabId, "raw-capture");
+}
+
+function recordContentReady(message: ContentReadyMessage, tabId?: number) {
+	if (tabId == null) return;
+	contentReadyUrlsByTab.set(tabId, message.url);
+	notifyTabWaiters(tabId, "content-ready");
 }
 
 async function collectProjectListing(
@@ -193,7 +210,8 @@ async function collectProjectListing(
 			`Opening: ${formatProviderFromUrl(message.currentProjectPageUrl)} project listing`,
 		);
 		await navigateTabUntilUrlMatches(helper.id, message.currentProjectPageUrl);
-		const project = await pollProjectFromTab(helper.id, projectId, true);
+		await waitForContentReady(helper.id, message.currentProjectPageUrl);
+		const project = await captureProjectFromTab(helper.id, projectId, true);
 		await sendProgress(senderTabId, null);
 		if (!project) return { ok: false, error: "No project data available." };
 		return { ok: true, project };
@@ -258,7 +276,8 @@ async function captureConversationFromPage(
 ): Promise<Conversation | null> {
 	clearTabState(helperTabId);
 	await navigateTabUntilUrlMatches(helperTabId, pageUrl);
-	return pollConversationFromTab(
+	await waitForContentReady(helperTabId, pageUrl);
+	return captureConversationFromTab(
 		helperTabId,
 		expectedChatId,
 		pageUrl,
@@ -267,7 +286,7 @@ async function captureConversationFromPage(
 	);
 }
 
-async function pollConversationFromTab(
+async function captureConversationFromTab(
 	tabId: number,
 	expectedChatId: string,
 	expectedPageUrl: string,
@@ -276,6 +295,7 @@ async function pollConversationFromTab(
 ): Promise<Conversation | null> {
 	const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
 	const isChatGpt = expectedPageUrl.includes("chatgpt.com");
+
 	while (Date.now() < deadline) {
 		const cached = conversationsByTab.get(tabId);
 		if (
@@ -286,8 +306,9 @@ async function pollConversationFromTab(
 				expectedTitle,
 			)
 		) {
-			if (!isChatGpt) return cached;
-			if (isChatGptConversationReady(tabId, expectedChatId)) return cached;
+			if (!isChatGpt || isChatGptConversationReady(tabId, expectedChatId)) {
+				return cached;
+			}
 		}
 
 		const response = await safeSendMessage<{
@@ -308,13 +329,15 @@ async function pollConversationFromTab(
 			)
 		) {
 			const conversation = response.conversation ?? null;
-			if (!isChatGpt) return conversation;
+			if (!isChatGpt || isChatGptConversationReady(tabId, expectedChatId)) {
+				return conversation;
+			}
 			conversationsByTab.set(tabId, conversation);
-			if (isChatGptConversationReady(tabId, expectedChatId)) return conversation;
 		}
 
-		await delay(POLL_INTERVAL_MS);
+		await waitForTabSignal(tabId, deadline);
 	}
+
 	return conversationsByTab.get(tabId) ?? null;
 }
 
@@ -331,7 +354,7 @@ function hasPendingChatGptTextdocs(tabId: number, conversationId: string): boole
 	return Boolean(pending && pending.length > 0);
 }
 
-async function pollProjectFromTab(
+async function captureProjectFromTab(
 	tabId: number,
 	expectedProjectId: string,
 	allowNetworkFallback: boolean,
@@ -380,8 +403,9 @@ async function pollProjectFromTab(
 			}
 		}
 
-		await delay(POLL_INTERVAL_MS);
+		await waitForTabSignal(tabId, deadline);
 	}
+
 	return bestProject;
 }
 
@@ -414,15 +438,7 @@ async function navigateTabUntilUrlMatches(
 ): Promise<void> {
 	clearTabState(tabId);
 	await browser.tabs.update(tabId, { url, active: false });
-
-	const deadline = Date.now() + TAB_URL_TIMEOUT_MS;
-	while (Date.now() < deadline) {
-		const tab = await browser.tabs.get(tabId).catch(() => null);
-		if (tab?.url && urlsMatch(tab.url, url)) return;
-		await delay(POLL_INTERVAL_MS);
-	}
-
-	throw new Error("Timed out waiting for helper tab navigation.");
+	await waitForTabUrl(tabId, url, TAB_URL_TIMEOUT_MS);
 }
 
 function urlsMatch(actual: string, expected: string): boolean {
@@ -457,6 +473,8 @@ function clearTabState(tabId: number) {
 	projectsByTab.delete(tabId);
 	pendingChatGptTextdocsByTab.delete(tabId);
 	observedChatGptTextdocsByTab.delete(tabId);
+	contentReadyUrlsByTab.delete(tabId);
+	clearTabWaiters(tabId);
 }
 
 async function closeTabQuietly(tabId: number) {
@@ -495,6 +513,62 @@ function capitalize(value: string): string {
 	return value.length ? value[0].toUpperCase() + value.slice(1) : value;
 }
 
-function delay(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+function notifyTabWaiters(tabId: number | undefined, signal: TabSignal) {
+	if (tabId == null) return;
+	const waiters = waitersByTab.get(tabId);
+	if (!waiters?.size) return;
+	for (const waiter of waiters) {
+		clearTimeout(waiter.timeoutId);
+		waiter.resolve(signal);
+	}
+	waitersByTab.delete(tabId);
+}
+
+function clearTabWaiters(tabId: number) {
+	const waiters = waitersByTab.get(tabId);
+	if (!waiters) return;
+	for (const waiter of waiters) {
+		clearTimeout(waiter.timeoutId);
+	}
+	waitersByTab.delete(tabId);
+}
+
+function waitForTabSignal(tabId: number, deadline: number): Promise<TabSignal> {
+	const remaining = Math.max(0, deadline - Date.now());
+	if (remaining <= 0) return Promise.reject(new Error("Timed out waiting for tab activity."));
+	return new Promise<TabSignal>((resolve, reject) => {
+		const waiter: Waiter = {
+			resolve: (signal) => {
+				waitersByTab.get(tabId)?.delete(waiter);
+				resolve(signal);
+			},
+			timeoutId: setTimeout(() => {
+				waitersByTab.get(tabId)?.delete(waiter);
+				reject(new Error("Timed out waiting for tab activity."));
+			}, remaining),
+		};
+		const waiters = waitersByTab.get(tabId) ?? new Set<Waiter>();
+		waiters.add(waiter);
+		waitersByTab.set(tabId, waiters);
+	});
+}
+
+async function waitForTabUrl(tabId: number, expectedUrl: string, timeoutMs: number) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const tab = await browser.tabs.get(tabId).catch(() => null);
+		if (tab?.url && urlsMatch(tab.url, expectedUrl)) return;
+		await waitForTabSignal(tabId, deadline);
+	}
+	throw new Error("Timed out waiting for helper tab navigation.");
+}
+
+async function waitForContentReady(tabId: number, expectedUrl: string) {
+	const deadline = Date.now() + TAB_URL_TIMEOUT_MS;
+	while (Date.now() < deadline) {
+		const readyUrl = contentReadyUrlsByTab.get(tabId);
+		if (readyUrl && urlsMatch(readyUrl, expectedUrl)) return;
+		await waitForTabSignal(tabId, deadline);
+	}
+	throw new Error("Timed out waiting for helper content script readiness.");
 }

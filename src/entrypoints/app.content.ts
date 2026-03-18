@@ -13,6 +13,7 @@ import {
 	shouldRenderFloatingButton,
 } from "../features/content/controller";
 import { mountFloatingUi } from "../features/content/floating-ui";
+import { subscribeUiContext } from "../features/content/controller";
 import type { RuntimeMessage } from "../lib/types";
 
 export default defineContentScript({
@@ -23,13 +24,16 @@ export default defineContentScript({
 		let floatingUi: ReturnType<typeof mountFloatingUi> | null = null;
 		const initPromise = initializeController();
 
+		let refreshQueued = false;
+
 		const mountIfNeeded = async (force = false) => {
 			await initPromise;
 			if (!mounted && (shouldRenderFloatingButton() || force)) {
 				mounted = true;
 				floatingUi = mountFloatingUi({
 					getContext: getUiContext,
-					getActiveConversation: () => getActiveConversationData(true),
+					subscribeContext: subscribeUiContext,
+					getActiveConversation: () => getActiveConversationData(false),
 					onExportChat: async (format, selectedMessageIds) =>
 						exportChat(format, "file", selectedMessageIds),
 					onCopyChat: async (format, selectedMessageIds) =>
@@ -40,18 +44,28 @@ export default defineContentScript({
 		};
 
 		const queueRefresh = () => {
-			void mountIfNeeded();
+			if (refreshQueued) return;
+			refreshQueued = true;
+			queueMicrotask(() => {
+				refreshQueued = false;
+				void mountIfNeeded();
+			});
 		};
 		window.addEventListener("popstate", queueRefresh);
 		window.addEventListener("hashchange", queueRefresh);
+		document.addEventListener("readystatechange", queueRefresh);
+		const mountObserver = new MutationObserver(() => {
+			if (!mounted) queueRefresh();
+		});
+		mountObserver.observe(document.documentElement, {
+			childList: true,
+			subtree: true,
+		});
 		void mountIfNeeded();
-		const retryMountId = window.setInterval(() => {
-			if (mounted) {
-				window.clearInterval(retryMountId);
-				return;
-			}
-			void mountIfNeeded();
-		}, 1200);
+		void browser.runtime.sendMessage({
+			type: "CONTENT_READY",
+			url: window.location.href,
+		} satisfies RuntimeMessage).catch(() => undefined);
 
 		browser.runtime.onMessage.addListener(
 			(message: RuntimeMessage, _sender, sendResponse) => {
@@ -147,7 +161,7 @@ export default defineContentScript({
 
 		window.addEventListener(
 			"beforeunload",
-			() => window.clearInterval(retryMountId),
+			() => mountObserver.disconnect(),
 			{ once: true },
 		);
 	},

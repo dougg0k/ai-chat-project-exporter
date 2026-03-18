@@ -28,7 +28,8 @@ import {
 	inferProvider,
 } from "../../lib/page-context";
 import { parseConversation, parseProjectListing } from "../../lib/parser";
-import { mergeChatGptTextdocs, parseChatGptTextdocs } from "../../lib/parser-chatgpt";
+import { parseChatGptTextdocs } from "../../lib/parser-chatgpt";
+import { replaceConversationTextdocs } from "../../lib/chatgpt-textdocs";
 import { mergeProjectListings, sortChatGptProjectListingUrls } from "../../lib/project-listing";
 import { unwrapRecordedOrDirectJson } from "../../lib/recorded";
 import {
@@ -51,12 +52,19 @@ import type {
 
 let latestConversation: Conversation | null = null;
 let latestProject: ProjectListing | null = null;
-const pendingChatGptTextdocs = new Map<string, import("../../lib/types").ChatGptTextdoc[]>();
+const chatGptTextdocsByConversation = new Map<string, import("../../lib/types").ChatGptTextdoc[]>();
+const observedChatGptConversationApis = new Set<string>();
+const observedChatGptTextdocs = new Set<string>();
+const chatGptConversationReadyWaiters = new Set<{
+	conversationId: string;
+	resolve: () => void;
+}>();
 let initialized = false;
 let showFloatingButton = true;
 let lastPageUrl = "";
 let projectExportStatus: string | null = null;
 let lastClaudeOrgId: string | null = null;
+const uiContextListeners = new Set<(context: UiContext) => void>();
 
 function currentUrl(): string {
 	return window.location.href;
@@ -438,8 +446,83 @@ function syncPageState() {
 	lastPageUrl = url;
 	latestConversation = null;
 	latestProject = null;
-	pendingChatGptTextdocs.clear();
+	chatGptTextdocsByConversation.clear();
+	observedChatGptConversationApis.clear();
+	observedChatGptTextdocs.clear();
+	chatGptConversationReadyWaiters.clear();
 	projectExportStatus = null;
+	emitUiContextChanged();
+}
+
+function markObservedConversationApi(conversationId: string) {
+	observedChatGptConversationApis.add(conversationId);
+}
+
+function hasObservedConversationApi(conversationId: string): boolean {
+	return observedChatGptConversationApis.has(conversationId);
+}
+
+function markObservedConversationTextdocs(conversationId: string) {
+	observedChatGptTextdocs.add(conversationId);
+	flushChatGptConversationReadyWaiters();
+}
+
+function hasObservedConversationTextdocs(conversationId: string): boolean {
+	return observedChatGptTextdocs.has(conversationId);
+}
+
+function conversationMatchesCurrentChat(
+	conversation: Conversation | null,
+	conversationId: string,
+): boolean {
+	if (!conversation) return false;
+	if (conversation.id === conversationId) return true;
+	const sourceChatId = conversation.sourceUrl
+		? extractCurrentChatId(conversation.sourceUrl)
+		: null;
+	return sourceChatId === conversationId;
+}
+
+function isCurrentChatGptConversationReady(conversationId: string): boolean {
+	return (
+		conversationMatchesCurrentChat(getActiveConversationForPage(), conversationId) &&
+		hasObservedConversationTextdocs(conversationId)
+	);
+}
+
+function flushChatGptConversationReadyWaiters() {
+	for (const waiter of [...chatGptConversationReadyWaiters]) {
+		if (!isCurrentChatGptConversationReady(waiter.conversationId)) continue;
+		chatGptConversationReadyWaiters.delete(waiter);
+		waiter.resolve();
+	}
+}
+
+function waitForCurrentChatGptConversationReady(
+	conversationId: string,
+): Promise<Conversation | null> {
+	if (isCurrentChatGptConversationReady(conversationId)) {
+		return Promise.resolve(getActiveConversationForPage());
+	}
+	return new Promise((resolve) => {
+		const waiter = {
+			conversationId,
+			resolve: () => resolve(getActiveConversationForPage()),
+		};
+		chatGptConversationReadyWaiters.add(waiter);
+		flushChatGptConversationReadyWaiters();
+	});
+}
+
+function getCurrentChatGptLoadingStatus(): string | null {
+	if (inferProvider(currentUrl()) !== "chatgpt") return null;
+	if (inferPageKind(currentUrl()) !== "chat") return null;
+	const currentChatId = extractCurrentChatId(currentUrl());
+	if (!currentChatId) return null;
+	if (hasObservedConversationTextdocs(currentChatId)) {
+		return null;
+	}
+	return "Content are still loading, please wait...";
 }
 
 function handleRawCapture(message: RawCaptureMessage) {
@@ -455,23 +538,24 @@ function handleRawCapture(message: RawCaptureMessage) {
 		message.text,
 		currentUrl(),
 	);
-	if (conversation) latestConversation = applyPendingConversationTextdocs(conversation);
+	if (conversation) {
+		if (conversation.provider === "chatgpt") {
+			markObservedConversationApi(conversation.id);
+		}
+		latestConversation = applyConversationTextdocs(conversation);
+		flushChatGptConversationReadyWaiters();
+	}
 	const textdocs = parseChatGptTextdocs(message.url, message.text);
 	if (textdocs) {
+		stashConversationTextdocs(textdocs.conversationId, textdocs.textdocs);
 		if (latestConversation) {
-			const merged = mergeConversationTextdocs(
+			latestConversation = replaceConversationTextdocs(
 				latestConversation,
 				textdocs.conversationId,
 				textdocs.textdocs,
 			);
-			if (merged === latestConversation) {
-				stashPendingConversationTextdocs(textdocs.conversationId, textdocs.textdocs);
-			} else {
-				latestConversation = merged;
-			}
-		} else {
-			stashPendingConversationTextdocs(textdocs.conversationId, textdocs.textdocs);
 		}
+		markObservedConversationTextdocs(textdocs.conversationId);
 	}
 	const project = parseProjectListing(message.url, message.text);
 	if (project) {
@@ -481,56 +565,45 @@ function handleRawCapture(message: RawCaptureMessage) {
 				? mergeProjectListings(latestProject, nextProject)
 				: nextProject;
 	}
+	emitUiContextChanged();
 }
 
 
 
-function stashPendingConversationTextdocs(
+function stashConversationTextdocs(
 	conversationId: string,
 	textdocs: import("../../lib/types").ChatGptTextdoc[],
 ) {
-	pendingChatGptTextdocs.set(
-		conversationId,
-		mergeChatGptTextdocs(
-			pendingChatGptTextdocs.get(conversationId),
-			textdocs,
-		) ?? [],
-	);
+	chatGptTextdocsByConversation.set(conversationId, [...textdocs]);
 }
 
-function applyPendingConversationTextdocs(
+function applyConversationTextdocs(
 	conversation: Conversation,
 ): Conversation {
 	if (conversation.provider !== "chatgpt") return conversation;
-	const pending = pendingChatGptTextdocs.get(conversation.id);
-	if (!pending?.length) return conversation;
-	pendingChatGptTextdocs.delete(conversation.id);
-	return mergeConversationTextdocs(conversation, conversation.id, pending);
-}
-
-function mergeConversationTextdocs(
-	conversation: Conversation,
-	conversationId: string,
-	textdocs: import("../../lib/types").ChatGptTextdoc[],
-): Conversation {
-	if (conversation.provider !== "chatgpt") return conversation;
-	if (conversation.id !== conversationId) {
-		const sourceChatId = conversation.sourceUrl
-			? extractCurrentChatId(conversation.sourceUrl)
-			: null;
-		if (sourceChatId !== conversationId) return conversation;
-	}
-	return {
-		...conversation,
-		chatGptTextdocs: mergeChatGptTextdocs(
-			conversation.chatGptTextdocs,
-			textdocs,
-		),
-	};
+	if (!chatGptTextdocsByConversation.has(conversation.id)) return conversation;
+	const textdocs = chatGptTextdocsByConversation.get(conversation.id) ?? [];
+	return replaceConversationTextdocs(conversation, conversation.id, textdocs);
 }
 
 function setProjectStatus(status: string | null) {
 	projectExportStatus = status;
+	emitUiContextChanged();
+}
+
+function emitUiContextChanged() {
+	const context = buildContext(false);
+	for (const listener of uiContextListeners) listener(context);
+	void browser.runtime
+		.sendMessage({ type: "UI_CONTEXT_CHANGED", context })
+		.catch(() => undefined);
+}
+
+export function subscribeUiContext(
+	listener: (context: UiContext) => void,
+): () => void {
+	uiContextListeners.add(listener);
+	return () => uiContextListeners.delete(listener);
 }
 
 function capitalizeWord(value: string): string {
@@ -570,17 +643,18 @@ function buildContext(waiting = false): UiContext {
 	const pageKind = inferPageKind(currentUrl());
 	const activeConversation = getActiveConversationForPage();
 	const activeProject = getActiveProjectForPage();
+	const loadingStatus = getCurrentChatGptLoadingStatus();
 
 	return {
 		provider,
 		pageKind,
 		hasConversation: Boolean(activeConversation),
 		hasProject: Boolean(activeProject),
-		waiting,
+		waiting: waiting || Boolean(loadingStatus),
 		title: activeConversation?.title,
 		projectName: activeProject?.projectName,
 		showFloatingButton,
-		projectExportStatus,
+		projectExportStatus: projectExportStatus ?? loadingStatus,
 	};
 }
 
@@ -618,14 +692,7 @@ async function ensureActiveConversationForPage(
 			if (result?.ok && result.text.trim()) {
 				const parsed = parseConversation(apiUrl, result.text, currentUrl());
 				if (parsed) {
-					let nextConversation = applyPendingConversationTextdocs(parsed);
-					if (latestConversation?.chatGptTextdocs?.length) {
-						nextConversation = mergeConversationTextdocs(
-							nextConversation,
-							nextConversation.id,
-							latestConversation.chatGptTextdocs,
-						);
-					}
+					const nextConversation = applyConversationTextdocs(parsed);
 					latestConversation =
 						await maybeEnrichClaudeConversationWithGeneratedDocuments(
 							nextConversation,
@@ -637,6 +704,24 @@ async function ensureActiveConversationForPage(
 	}
 
 	return getActiveConversationForPage();
+}
+
+async function waitForSingleChatConversationForExport(): Promise<Conversation | null> {
+	if (inferProvider(currentUrl()) !== "chatgpt") {
+		return ensureActiveConversationForPage();
+	}
+	if (inferPageKind(currentUrl()) !== "chat") {
+		return ensureActiveConversationForPage();
+	}
+	const currentChatId = extractCurrentChatId(currentUrl());
+	if (!currentChatId) {
+		return ensureActiveConversationForPage(false);
+	}
+	const activeConversation = getActiveConversationForPage();
+	if (conversationMatchesCurrentChat(activeConversation, currentChatId) && hasObservedConversationTextdocs(currentChatId)) {
+		return activeConversation;
+	}
+	return waitForCurrentChatGptConversationReady(currentChatId);
 }
 
 async function ensureActiveProjectData(): Promise<ProjectListing | null> {
@@ -749,7 +834,9 @@ export async function setFloatingButtonVisible(
 ): Promise<UiContext> {
 	showFloatingButton = value;
 	await setShowFloatingButton(value).catch(() => undefined);
-	return buildContext(false);
+	const context = buildContext(false);
+	emitUiContextChanged();
+	return context;
 }
 
 export function shouldRenderFloatingButton(): boolean {
@@ -773,7 +860,7 @@ export async function getRenderedChat(
 	format: ExportFormat,
 	selectedMessageIds?: string[],
 ): Promise<string> {
-	const conversation = await ensureActiveConversationForPage();
+	const conversation = await waitForSingleChatConversationForExport();
 	if (!conversation) {
 		throw new Error("No chat data available.");
 	}
@@ -789,7 +876,7 @@ export async function exportChat(
 	target: "file" | "clipboard",
 	selectedMessageIds?: string[],
 ): Promise<void> {
-	const conversation = await ensureActiveConversationForPage();
+	const conversation = await waitForSingleChatConversationForExport();
 	if (!conversation) {
 		throw new Error("No chat data available.");
 	}

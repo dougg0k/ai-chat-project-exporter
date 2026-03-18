@@ -148,6 +148,16 @@ export interface ProjectExportProgressMessage {
 	status: string | null;
 }
 
+export interface ContentReadyMessage {
+	type: "CONTENT_READY";
+	url: string;
+}
+
+export interface UiContextChangedMessage {
+	type: "UI_CONTEXT_CHANGED";
+	context: UiContext;
+}
+
 export type RuntimeMessage =
 	| RawCaptureMessage
 	| RunPageFetchMessage
@@ -162,4 +172,6 @@ export type RuntimeMessage =
 	| OpenSelectExportModalMessage
 	| CollectProjectListingMessage
 	| CollectProjectConversationsMessage
-	| ProjectExportProgressMessage;
+	| ProjectExportProgressMessage
+	| ContentReadyMessage
+	| UiContextChangedMessage;

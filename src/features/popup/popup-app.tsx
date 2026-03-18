@@ -33,6 +33,7 @@ export function PopupApp() {
 	const [error, setError] = React.useState<string>("");
 	const [status, setStatus] = React.useState<string>("");
 	const [loadingSelection, setLoadingSelection] = React.useState(false);
+	const [waiting, setWaiting] = React.useState(false);
 
 	const refreshContext = React.useCallback(async () => {
 		if (activeTabId == null) return;
@@ -43,6 +44,7 @@ export function PopupApp() {
 			if (ctx?.pageKind) {
 				setPageKind(ctx.pageKind);
 				setStatus(ctx.projectExportStatus ?? "");
+				setWaiting(Boolean(ctx.waiting));
 			}
 		} catch {
 			// ignore
@@ -87,11 +89,45 @@ export function PopupApp() {
 
 	React.useEffect(() => {
 		void refreshContext();
-		const id = window.setInterval(() => {
-			void refreshContext();
-		}, 800);
-		return () => window.clearInterval(id);
 	}, [refreshContext]);
+
+	React.useEffect(() => {
+		const onActivated = (activeInfo: { tabId: number }) => {
+			setActiveTabId(activeInfo.tabId);
+			void refreshContext();
+		};
+		const onUpdated = (
+			tabId: number,
+			changeInfo: { status?: string; url?: string },
+			tab: { url?: string },
+		) => {
+			if (tabId !== activeTabId) return;
+			if (!tab.url && !changeInfo.url) return;
+			setPageKind(inferPageKind(changeInfo.url || tab.url || ""));
+			if (changeInfo.status === "complete" || changeInfo.url) {
+				void refreshContext();
+			}
+		};
+		const onFocusChanged = () => {
+			void browser.tabs
+				.query({ active: true, currentWindow: true })
+				.then(([tab]) => {
+					if (!tab?.id) return;
+					setActiveTabId(tab.id);
+					if (tab.url) setPageKind(inferPageKind(tab.url));
+					void refreshContext();
+				})
+				.catch(() => undefined);
+		};
+		browser.tabs.onActivated.addListener(onActivated);
+		browser.tabs.onUpdated.addListener(onUpdated);
+		browser.windows.onFocusChanged.addListener(onFocusChanged);
+		return () => {
+			browser.tabs.onActivated.removeListener(onActivated);
+			browser.tabs.onUpdated.removeListener(onUpdated);
+			browser.windows.onFocusChanged.removeListener(onFocusChanged);
+		};
+	}, [activeTabId, refreshContext]);
 
 	const setFormat = React.useCallback((next: ExportFormat) => {
 		setFormatState(next);
@@ -221,7 +257,7 @@ export function PopupApp() {
 				onToggleFloating={toggleFloating}
 				showFloatingButton={showFloatingButton}
 				statusText={status || undefined}
-				disabled={loadingSelection}
+				disabled={loadingSelection || waiting}
 			/>
 			{error && (
 				<div style={{ marginTop: 10, fontSize: 12, color: "#b91c1c" }}>

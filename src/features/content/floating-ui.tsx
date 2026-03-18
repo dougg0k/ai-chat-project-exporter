@@ -23,6 +23,7 @@ const ACTIVE_BORDER_PX = 2;
 
 export function mountFloatingUi(options: {
 	getContext: () => Promise<UiContext>;
+	subscribeContext: (listener: (context: UiContext) => void) => () => void;
 	getActiveConversation: () => Promise<Conversation | null>;
 	onExportChat: (
 		format: ExportFormat,
@@ -80,6 +81,7 @@ function FloatingApp(props: {
 		openSelectionModal: (format?: ExportFormat) => void;
 	}) => void;
 	getContext: () => Promise<UiContext>;
+	subscribeContext: (listener: (context: UiContext) => void) => () => void;
 	getActiveConversation: () => Promise<Conversation | null>;
 	onExportChat: (
 		format: ExportFormat,
@@ -208,15 +210,7 @@ function FloatingApp(props: {
 		props.applyHostPosition(position);
 	}, [position, props]);
 
-	React.useEffect(() => {
-		const id = window.setInterval(
-			() => {
-				void refresh();
-			},
-			open ? 700 : 1200,
-		);
-		return () => window.clearInterval(id);
-	}, [open, refresh]);
+	React.useEffect(() => props.subscribeContext(setContext), [props]);
 
 	React.useEffect(() => {
 		if (!open) return;
@@ -416,7 +410,7 @@ function FloatingApp(props: {
 						}}
 						showFloatingButton={context.showFloatingButton}
 						statusText={context.projectExportStatus ?? undefined}
-						disabled={busy}
+						disabled={busy || context.waiting}
 						onExport={() => {
 							if (context.pageKind === "project") {
 								setBusy(true);
