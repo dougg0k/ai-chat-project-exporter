@@ -797,7 +797,7 @@ export async function exportProject(format: ExportFormat): Promise<void> {
 
 		const zip = new JSZip();
 		const now = new Date();
-		const folderName = `${safeFilenamePart(activeProject.projectName)}_${buildDateTime(now)}`;
+		const folderName = `${safeFilenamePart(activeProject.projectName)}_${capitalizeWord(activeProject.provider)}_${buildDateTime(now)}`;
 		const sorted = conversations.slice().sort((a, b) => {
 			const ai =
 				activeProject.chats.find((chat) => chat.id === a.id)?.order ?? 0;
@@ -829,7 +829,12 @@ export async function exportProject(format: ExportFormat): Promise<void> {
 		const blob = await zip.generateAsync({ type: "blob" });
 		saveBlobAsFile(
 			blob,
-			buildProjectZipFilename(activeProject.projectName, format, now),
+			buildProjectZipFilename(
+				activeProject.projectName,
+				format,
+				now,
+				activeProject.provider,
+			),
 		);
 	} finally {
 		setProjectStatus(null);

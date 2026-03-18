@@ -1,3 +1,5 @@
+import type { ProviderName } from "./types";
+
 export function safeFilenamePart(value: string): string {
 	return value
 		.replace(/[/:*?"<>|]+/g, "-")
@@ -20,9 +22,10 @@ export function buildProjectZipFilename(
 	projectName: string,
 	format: "markdown" | "html",
 	now: Date,
+	provider: ProviderName,
 ): string {
 	const suffix = format === "html" ? "_html" : "_md";
-	return `${safeFilenamePart(projectName)}_${buildDateTime(now)}${suffix}.zip`;
+	return `${safeFilenamePart(projectName)}_${provider}_${buildDateTime(now)}${suffix}.zip`;
 }
 
 export function buildDateTime(now = new Date()) {
