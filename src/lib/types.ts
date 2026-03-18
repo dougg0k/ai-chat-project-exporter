@@ -13,6 +13,15 @@ export interface GeneratedDocument {
 	createdAt?: string;
 }
 
+export interface ChatGptTextdoc {
+	id: string;
+	title: string;
+	content: string;
+	version: number;
+	updatedAt?: string;
+	textdocType?: string;
+}
+
 export interface Message {
 	id: string;
 	role: "user" | "assistant";
@@ -28,6 +37,7 @@ export interface Conversation {
 	exportedAt: string;
 	messages: Message[];
 	generatedDocuments?: GeneratedDocument[];
+	chatGptTextdocs?: ChatGptTextdoc[];
 	appendixMarkdown?: string;
 }
 

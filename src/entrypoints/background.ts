@@ -2,6 +2,7 @@ import { defineBackground } from "wxt/utils/define-background";
 import { browser } from "wxt/browser";
 import { buildProjectChatPageUrls } from "../lib/page-context";
 import { parseConversation, parseProjectListing } from "../lib/parser";
+import { mergeChatGptTextdocs, parseChatGptTextdocs } from "../lib/parser-chatgpt";
 import { mergeProjectListings, projectListingSignature } from "../lib/project-listing";
 import type {
 	CollectProjectConversationsMessage,
@@ -27,6 +28,8 @@ type SenderResponse = {
 
 const conversationsByTab = new Map<number, Conversation | null>();
 const projectsByTab = new Map<number, ProjectListing | null>();
+const pendingChatGptTextdocsByTab = new Map<number, Map<string, import("../lib/types").ChatGptTextdoc[]>>();
+const observedChatGptTextdocsByTab = new Map<number, Set<string>>();
 
 export default defineBackground(() => {
 	browser.runtime.onMessage.addListener(
@@ -55,6 +58,66 @@ export default defineBackground(() => {
 	);
 });
 
+
+
+function markObservedConversationTextdocs(tabId: number, conversationId: string) {
+	const observed = observedChatGptTextdocsByTab.get(tabId) ?? new Set<string>();
+	observed.add(conversationId);
+	observedChatGptTextdocsByTab.set(tabId, observed);
+}
+
+function hasObservedConversationTextdocs(tabId: number, conversationId: string): boolean {
+	return observedChatGptTextdocsByTab.get(tabId)?.has(conversationId) ?? false;
+}
+
+function stashPendingConversationTextdocs(
+	tabId: number,
+	conversationId: string,
+	textdocs: import("../lib/types").ChatGptTextdoc[],
+) {
+	const byConversation =
+		pendingChatGptTextdocsByTab.get(tabId) ??
+		new Map<string, import("../lib/types").ChatGptTextdoc[]>();
+	byConversation.set(
+		conversationId,
+		mergeChatGptTextdocs(byConversation.get(conversationId), textdocs) ?? [],
+	);
+	pendingChatGptTextdocsByTab.set(tabId, byConversation);
+}
+
+function applyPendingConversationTextdocs(
+	tabId: number,
+	conversation: Conversation,
+): Conversation {
+	if (conversation.provider !== "chatgpt") return conversation;
+	const byConversation = pendingChatGptTextdocsByTab.get(tabId);
+	const pending = byConversation?.get(conversation.id);
+	if (!pending?.length) return conversation;
+	byConversation?.delete(conversation.id);
+	if (byConversation && byConversation.size === 0)
+		pendingChatGptTextdocsByTab.delete(tabId);
+	return mergeConversationTextdocs(conversation, conversation.id, pending);
+}
+
+function mergeConversationTextdocs(
+	conversation: Conversation,
+	conversationId: string,
+	textdocs: import("../lib/types").ChatGptTextdoc[],
+): Conversation {
+	if (conversation.provider !== "chatgpt") return conversation;
+	if (conversation.id !== conversationId) {
+		const sourceMatch = conversation.sourceUrl?.match(/\/c\/([A-Za-z0-9-]+)$/);
+		if (sourceMatch?.[1] !== conversationId) return conversation;
+	}
+	return {
+		...conversation,
+		chatGptTextdocs: mergeChatGptTextdocs(
+			conversation.chatGptTextdocs,
+			textdocs,
+		),
+	};
+}
+
 async function respondAsync(
 	sendResponse: (response?: any) => void,
 	task: () => Promise<SenderResponse>,
@@ -80,7 +143,27 @@ function recordRawCapture(
 		message.text,
 		pageUrl ?? message.url,
 	);
-	if (conversation) conversationsByTab.set(tabId, conversation);
+	if (conversation)
+		conversationsByTab.set(tabId, applyPendingConversationTextdocs(tabId, conversation));
+	const textdocs = parseChatGptTextdocs(message.url, message.text);
+	if (textdocs) {
+		markObservedConversationTextdocs(tabId, textdocs.conversationId);
+		const existing = conversationsByTab.get(tabId);
+		if (existing) {
+			const merged = mergeConversationTextdocs(
+				existing,
+				textdocs.conversationId,
+				textdocs.textdocs,
+			);
+			if (merged === existing) {
+				stashPendingConversationTextdocs(tabId, textdocs.conversationId, textdocs.textdocs);
+			} else {
+				conversationsByTab.set(tabId, merged);
+			}
+		} else {
+			stashPendingConversationTextdocs(tabId, textdocs.conversationId, textdocs.textdocs);
+		}
+	}
 	const project = parseProjectListing(message.url, message.text);
 	if (project) {
 		const nextProject =
@@ -175,7 +258,6 @@ async function captureConversationFromPage(
 ): Promise<Conversation | null> {
 	clearTabState(helperTabId);
 	await navigateTabUntilUrlMatches(helperTabId, pageUrl);
-	await delay(500);
 	return pollConversationFromTab(
 		helperTabId,
 		expectedChatId,
@@ -193,6 +275,7 @@ async function pollConversationFromTab(
 	allowNetworkFallback: boolean,
 ): Promise<Conversation | null> {
 	const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
+	const isChatGpt = expectedPageUrl.includes("chatgpt.com");
 	while (Date.now() < deadline) {
 		const cached = conversationsByTab.get(tabId);
 		if (
@@ -202,8 +285,10 @@ async function pollConversationFromTab(
 				expectedPageUrl,
 				expectedTitle,
 			)
-		)
-			return cached;
+		) {
+			if (!isChatGpt) return cached;
+			if (isChatGptConversationReady(tabId, expectedChatId)) return cached;
+		}
 
 		const response = await safeSendMessage<{
 			ok?: boolean;
@@ -222,12 +307,28 @@ async function pollConversationFromTab(
 				expectedTitle,
 			)
 		) {
-			return response.conversation ?? null;
+			const conversation = response.conversation ?? null;
+			if (!isChatGpt) return conversation;
+			conversationsByTab.set(tabId, conversation);
+			if (isChatGptConversationReady(tabId, expectedChatId)) return conversation;
 		}
 
 		await delay(POLL_INTERVAL_MS);
 	}
-	return null;
+	return conversationsByTab.get(tabId) ?? null;
+}
+
+function isChatGptConversationReady(
+	tabId: number,
+	expectedChatId: string,
+): boolean {
+	if (hasPendingChatGptTextdocs(tabId, expectedChatId)) return false;
+	return hasObservedConversationTextdocs(tabId, expectedChatId);
+}
+
+function hasPendingChatGptTextdocs(tabId: number, conversationId: string): boolean {
+	const pending = pendingChatGptTextdocsByTab.get(tabId)?.get(conversationId);
+	return Boolean(pending && pending.length > 0);
 }
 
 async function pollProjectFromTab(
@@ -238,7 +339,7 @@ async function pollProjectFromTab(
 	const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
 	let bestProject: ProjectListing | null = null;
 	let lastSignature = "";
-	let stableSince = 0;
+	let unchangedCount = 0;
 
 	while (Date.now() < deadline) {
 		let candidate = projectsByTab.get(tabId) ?? null;
@@ -271,10 +372,10 @@ async function pollProjectFromTab(
 			const signature = projectListingSignature(bestProject);
 			if (signature !== lastSignature) {
 				lastSignature = signature;
-				stableSince = Date.now();
+				unchangedCount = 0;
 			} else if (bestProject.provider !== "chatgpt") {
 				return bestProject;
-			} else if (stableSince && Date.now() - stableSince >= 3000) {
+			} else if (++unchangedCount >= 2) {
 				return bestProject;
 			}
 		}
@@ -354,6 +455,8 @@ function matchesExpectedConversation(
 function clearTabState(tabId: number) {
 	conversationsByTab.delete(tabId);
 	projectsByTab.delete(tabId);
+	pendingChatGptTextdocsByTab.delete(tabId);
+	observedChatGptTextdocsByTab.delete(tabId);
 }
 
 async function closeTabQuietly(tabId: number) {

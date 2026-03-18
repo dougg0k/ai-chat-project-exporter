@@ -99,10 +99,17 @@ export default defineContentScript({
 						if (
 							responseType === "arraybuffer" ||
 							responseType === "blob" ||
-							responseType === "document" ||
-							responseType === "json"
+							responseType === "document"
 						)
 							return;
+						if (responseType === "json") {
+							const jsonText =
+								typeof this.response === "string"
+									? this.response
+									: JSON.stringify(this.response ?? null);
+							captureText(this.__captureUrl, jsonText);
+							return;
+						}
 						captureText(this.__captureUrl, this.responseText ?? "");
 					} catch {
 						// ignore xhr capture failures

@@ -1,6 +1,7 @@
 export function isRelevantProviderApiUrl(url: string): boolean {
 	return (
 		isChatGptConversationUrl(url) ||
+		isChatGptTextdocsUrl(url) ||
 		isChatGptProjectUrl(url) ||
 		isClaudeConversationUrl(url) ||
 		isClaudeProjectUrl(url)
@@ -9,6 +10,13 @@ export function isRelevantProviderApiUrl(url: string): boolean {
 
 export function isChatGptConversationUrl(url: string): boolean {
 	return /^https:\/\/chatgpt\.com\/backend-api\/conversation\/[A-Za-z0-9-]+(?:\?.*)?$/.test(
+		url,
+	);
+}
+
+
+export function isChatGptTextdocsUrl(url: string): boolean {
+	return /^https:\/\/chatgpt\.com\/backend-api\/conversation\/[A-Za-z0-9-]+\/textdocs(?:\?.*)?$/.test(
 		url,
 	);
 }

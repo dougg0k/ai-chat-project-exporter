@@ -28,6 +28,7 @@ import {
 	inferProvider,
 } from "../../lib/page-context";
 import { parseConversation, parseProjectListing } from "../../lib/parser";
+import { mergeChatGptTextdocs, parseChatGptTextdocs } from "../../lib/parser-chatgpt";
 import { mergeProjectListings, sortChatGptProjectListingUrls } from "../../lib/project-listing";
 import { unwrapRecordedOrDirectJson } from "../../lib/recorded";
 import {
@@ -50,6 +51,7 @@ import type {
 
 let latestConversation: Conversation | null = null;
 let latestProject: ProjectListing | null = null;
+const pendingChatGptTextdocs = new Map<string, import("../../lib/types").ChatGptTextdoc[]>();
 let initialized = false;
 let showFloatingButton = true;
 let lastPageUrl = "";
@@ -436,6 +438,7 @@ function syncPageState() {
 	lastPageUrl = url;
 	latestConversation = null;
 	latestProject = null;
+	pendingChatGptTextdocs.clear();
 	projectExportStatus = null;
 }
 
@@ -452,7 +455,24 @@ function handleRawCapture(message: RawCaptureMessage) {
 		message.text,
 		currentUrl(),
 	);
-	if (conversation) latestConversation = conversation;
+	if (conversation) latestConversation = applyPendingConversationTextdocs(conversation);
+	const textdocs = parseChatGptTextdocs(message.url, message.text);
+	if (textdocs) {
+		if (latestConversation) {
+			const merged = mergeConversationTextdocs(
+				latestConversation,
+				textdocs.conversationId,
+				textdocs.textdocs,
+			);
+			if (merged === latestConversation) {
+				stashPendingConversationTextdocs(textdocs.conversationId, textdocs.textdocs);
+			} else {
+				latestConversation = merged;
+			}
+		} else {
+			stashPendingConversationTextdocs(textdocs.conversationId, textdocs.textdocs);
+		}
+	}
 	const project = parseProjectListing(message.url, message.text);
 	if (project) {
 		const nextProject = withBetterProjectName(project);
@@ -461,6 +481,52 @@ function handleRawCapture(message: RawCaptureMessage) {
 				? mergeProjectListings(latestProject, nextProject)
 				: nextProject;
 	}
+}
+
+
+
+function stashPendingConversationTextdocs(
+	conversationId: string,
+	textdocs: import("../../lib/types").ChatGptTextdoc[],
+) {
+	pendingChatGptTextdocs.set(
+		conversationId,
+		mergeChatGptTextdocs(
+			pendingChatGptTextdocs.get(conversationId),
+			textdocs,
+		) ?? [],
+	);
+}
+
+function applyPendingConversationTextdocs(
+	conversation: Conversation,
+): Conversation {
+	if (conversation.provider !== "chatgpt") return conversation;
+	const pending = pendingChatGptTextdocs.get(conversation.id);
+	if (!pending?.length) return conversation;
+	pendingChatGptTextdocs.delete(conversation.id);
+	return mergeConversationTextdocs(conversation, conversation.id, pending);
+}
+
+function mergeConversationTextdocs(
+	conversation: Conversation,
+	conversationId: string,
+	textdocs: import("../../lib/types").ChatGptTextdoc[],
+): Conversation {
+	if (conversation.provider !== "chatgpt") return conversation;
+	if (conversation.id !== conversationId) {
+		const sourceChatId = conversation.sourceUrl
+			? extractCurrentChatId(conversation.sourceUrl)
+			: null;
+		if (sourceChatId !== conversationId) return conversation;
+	}
+	return {
+		...conversation,
+		chatGptTextdocs: mergeChatGptTextdocs(
+			conversation.chatGptTextdocs,
+			textdocs,
+		),
+	};
 }
 
 function setProjectStatus(status: string | null) {
@@ -552,9 +618,17 @@ async function ensureActiveConversationForPage(
 			if (result?.ok && result.text.trim()) {
 				const parsed = parseConversation(apiUrl, result.text, currentUrl());
 				if (parsed) {
+					let nextConversation = applyPendingConversationTextdocs(parsed);
+					if (latestConversation?.chatGptTextdocs?.length) {
+						nextConversation = mergeConversationTextdocs(
+							nextConversation,
+							nextConversation.id,
+							latestConversation.chatGptTextdocs,
+						);
+					}
 					latestConversation =
 						await maybeEnrichClaudeConversationWithGeneratedDocuments(
-							parsed,
+							nextConversation,
 							allowNetworkFallback,
 						);
 				}

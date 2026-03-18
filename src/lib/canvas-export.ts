@@ -5,6 +5,7 @@ import {
 } from "./export-format";
 import { buildConversationFilename, safeFilenamePart } from "./file";
 import type {
+	ChatGptTextdoc,
 	Conversation,
 	ExportFormat,
 	GeneratedDocument,
@@ -44,9 +45,24 @@ export function prepareConversationExport(
 	);
 	const usedPaths = new Set<string>();
 	const canvases: CanvasAsset[] = [];
+	const chatGptCanvasAssets = materializeChatGptTextdocs(
+		conversation,
+		format,
+		chatFolder,
+		usedPaths,
+	);
+	const chatGptCanvasResolver = buildChatGptCanvasResolver(chatGptCanvasAssets);
+	canvases.push(...chatGptCanvasAssets);
 
 	const messages = conversation.messages.map((message) =>
-		transformMessage(message, format, chatFolder, usedPaths, canvases),
+		transformMessage(
+			message,
+			format,
+			chatFolder,
+			usedPaths,
+			canvases,
+			chatGptCanvasResolver,
+		),
 	);
 	const generatedDocumentAssets = materializeGeneratedDocuments(
 		conversation.generatedDocuments ?? [],
@@ -79,22 +95,35 @@ function transformMessage(
 	chatFolder: string,
 	usedPaths: Set<string>,
 	canvases: CanvasAsset[],
+	chatGptCanvasResolver?: Map<string, CanvasAsset>,
 ): Message {
 	if (message.role !== "assistant") return message;
 	const parsed = findCanvasPayload(message.markdown);
 	if (!parsed) return message;
 
-	const artifact = materializeCanvas(
-		parsed.payload,
-		parsed.prefix,
-		message.id,
-		chatFolder,
-		usedPaths,
-		format,
+	let artifact: CanvasAsset | null = null;
+	const hasChatGptTextdocs = Boolean(
+		chatGptCanvasResolver && chatGptCanvasResolver.size > 0,
 	);
+	if (hasChatGptTextdocs) {
+		artifact = resolveChatGptCanvasArtifact(
+			parsed.payload,
+			parsed.prefix,
+			chatGptCanvasResolver!,
+		);
+		if (!artifact) return message;
+	} else {
+		artifact = materializeCanvas(
+			parsed.payload,
+			parsed.prefix,
+			message.id,
+			chatFolder,
+			usedPaths,
+			format,
+		);
+		if (artifact) canvases.push(artifact);
+	}
 	if (!artifact) return message;
-
-	canvases.push(artifact);
 	const replacement =
 		format === "html"
 			? (artifact.embeddedMarkdown ?? "")
@@ -174,6 +203,67 @@ function materializeCanvas(
 	}
 
 	return null;
+}
+
+
+function materializeChatGptTextdocs(
+	conversation: Conversation,
+	format: ExportFormat,
+	chatFolder: string,
+	usedPaths: Set<string>,
+): CanvasAsset[] {
+	if (conversation.provider !== "chatgpt") return [];
+	const textdocs = conversation.chatGptTextdocs ?? [];
+	if (textdocs.length === 0) return [];
+	return textdocs
+		.map((textdoc) => {
+			const markdown = cleanVisibleMarkdown(textdoc.content || "");
+			if (!markdown.trim()) return null;
+			return buildAsset({
+				kind: "canvas",
+				title: textdoc.title || "Untitled-Canvas",
+				markdown,
+				messageId: textdoc.id,
+				chatFolder,
+				usedPaths,
+				format,
+				folderName: "canvas",
+				label: "Canvas",
+			});
+		})
+		.filter(Boolean) as CanvasAsset[];
+}
+
+function buildChatGptCanvasResolver(
+	assets: CanvasAsset[],
+): Map<string, CanvasAsset> {
+	const resolver = new Map<string, CanvasAsset>();
+	for (const asset of assets) {
+		resolver.set(normalizeCanvasLookupKey(asset.title), asset);
+	}
+	return resolver;
+}
+
+function resolveChatGptCanvasArtifact(
+	payload: any,
+	prefix: string,
+	resolver: Map<string, CanvasAsset>,
+): CanvasAsset | null {
+	const candidates = [
+		typeof payload?.name === "string" ? payload.name : "",
+		inferTitleFromPrefix(prefix) ?? "",
+	];
+	for (const candidate of candidates) {
+		const key = normalizeCanvasLookupKey(candidate);
+		if (!key) continue;
+		const asset = resolver.get(key);
+		if (asset) return asset;
+	}
+	return null;
+}
+
+function normalizeCanvasLookupKey(value: string): string {
+	return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function materializeGeneratedDocuments(
