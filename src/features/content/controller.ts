@@ -28,6 +28,7 @@ import {
 	inferProvider,
 } from "../../lib/page-context";
 import { parseConversation, parseProjectListing } from "../../lib/parser";
+import { mergeProjectListings, sortChatGptProjectListingUrls } from "../../lib/project-listing";
 import { unwrapRecordedOrDirectJson } from "../../lib/recorded";
 import {
 	getLastClaudeOrgId,
@@ -453,7 +454,13 @@ function handleRawCapture(message: RawCaptureMessage) {
 	);
 	if (conversation) latestConversation = conversation;
 	const project = parseProjectListing(message.url, message.text);
-	if (project) latestProject = withBetterProjectName(project);
+	if (project) {
+		const nextProject = withBetterProjectName(project);
+		latestProject =
+			nextProject.provider === "chatgpt"
+				? mergeProjectListings(latestProject, nextProject)
+				: nextProject;
+	}
 }
 
 function setProjectStatus(status: string | null) {
@@ -578,22 +585,43 @@ async function ensureActiveProjectData(): Promise<ProjectListing | null> {
 			observed,
 			lastClaudeOrgId,
 		);
-		if (listingUrl) {
-			const orgId = extractClaudeOrgIdFromUrl(listingUrl);
+		const listingUrls =
+			provider === "chatgpt"
+				? (() => {
+					const projectId = extractCurrentProjectId(currentUrl());
+					const matchingObserved = observed.filter((url) =>
+						projectId
+							? url.includes(`/backend-api/gizmos/${projectId}/conversations`)
+							: false,
+					);
+					const urls = listingUrl
+						? [...matchingObserved, listingUrl]
+						: matchingObserved;
+					return sortChatGptProjectListingUrls(Array.from(new Set(urls)));
+				})()
+				: listingUrl
+					? [listingUrl]
+					: [];
+
+		for (const url of listingUrls) {
+			const orgId = extractClaudeOrgIdFromUrl(url);
 			if (orgId && orgId !== lastClaudeOrgId) {
 				lastClaudeOrgId = orgId;
 				void setLastClaudeOrgId(orgId).catch(() => undefined);
 			}
-			const result = await pageFetch(listingUrl).catch(() => null);
-			if (result?.ok && result.text.trim()) {
-				const parsed = parseProjectListing(listingUrl, result.text);
-				if (parsed) {
-					latestProject = withBetterProjectName(parsed);
-					const active = getActiveProjectForPage();
-					if (active) return active;
-				}
-			}
+			const result = await pageFetch(url).catch(() => null);
+			if (!result?.ok || !result.text.trim()) continue;
+			const parsed = parseProjectListing(url, result.text);
+			if (!parsed) continue;
+			const nextProject = withBetterProjectName(parsed);
+			latestProject =
+				provider === "chatgpt"
+					? mergeProjectListings(latestProject, nextProject)
+					: nextProject;
 		}
+
+		const active = getActiveProjectForPage();
+		if (active) return active;
 
 		if (provider === "claude") {
 			const scraped = scrapeClaudeProjectFromDom();

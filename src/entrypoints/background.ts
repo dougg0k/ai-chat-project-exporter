@@ -2,6 +2,7 @@ import { defineBackground } from "wxt/utils/define-background";
 import { browser } from "wxt/browser";
 import { buildProjectChatPageUrls } from "../lib/page-context";
 import { parseConversation, parseProjectListing } from "../lib/parser";
+import { mergeProjectListings, projectListingSignature } from "../lib/project-listing";
 import type {
 	CollectProjectConversationsMessage,
 	CollectProjectListingMessage,
@@ -81,7 +82,13 @@ function recordRawCapture(
 	);
 	if (conversation) conversationsByTab.set(tabId, conversation);
 	const project = parseProjectListing(message.url, message.text);
-	if (project) projectsByTab.set(tabId, project);
+	if (project) {
+		const nextProject =
+			project.provider === "chatgpt"
+				? mergeProjectListings(projectsByTab.get(tabId) ?? null, project)
+				: project;
+		projectsByTab.set(tabId, nextProject);
+	}
 }
 
 async function collectProjectListing(
@@ -229,9 +236,12 @@ async function pollProjectFromTab(
 	allowNetworkFallback: boolean,
 ): Promise<ProjectListing | null> {
 	const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
+	let bestProject: ProjectListing | null = null;
+	let lastSignature = "";
+	let stableSince = 0;
+
 	while (Date.now() < deadline) {
-		const cached = projectsByTab.get(tabId);
-		if (cached?.projectId === expectedProjectId) return cached;
+		let candidate = projectsByTab.get(tabId) ?? null;
 
 		const response = await safeSendMessage<{
 			ok?: boolean;
@@ -247,12 +257,31 @@ async function pollProjectFromTab(
 			(response.project.projectId === expectedProjectId ||
 				response.project.chats.length > 0)
 		) {
-			return response.project;
+			candidate =
+				response.project.provider === "chatgpt"
+					? mergeProjectListings(candidate, response.project)
+					: response.project;
+		}
+
+		if (candidate?.projectId === expectedProjectId) {
+			bestProject =
+				candidate.provider === "chatgpt"
+					? mergeProjectListings(bestProject, candidate)
+					: candidate;
+			const signature = projectListingSignature(bestProject);
+			if (signature !== lastSignature) {
+				lastSignature = signature;
+				stableSince = Date.now();
+			} else if (bestProject.provider !== "chatgpt") {
+				return bestProject;
+			} else if (stableSince && Date.now() - stableSince >= 3000) {
+				return bestProject;
+			}
 		}
 
 		await delay(POLL_INTERVAL_MS);
 	}
-	return null;
+	return bestProject;
 }
 
 async function safeSendMessage<T>(
