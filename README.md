@@ -41,3 +41,9 @@ The extension only stores local configuration needed for usability.
 - ChatGPT (incl projects)
 - Claude (incl projects)
 - Gemini (not supported)
+
+---
+
+## Not planned
+
+- Full chats backup - However, it would be possible.
