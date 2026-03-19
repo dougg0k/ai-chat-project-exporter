@@ -74,8 +74,7 @@ export function buildChatGptProjectListingUrl(
 	projectId: string,
 	cursor: string,
 ): string {
-	const encodedCursor =
-		cursor === "0" ? cursor : encodeURIComponent(cursor);
+	const encodedCursor = cursor === "0" ? cursor : encodeURIComponent(cursor);
 	return `https://chatgpt.com/backend-api/gizmos/${projectId}/conversations?cursor=${encodedCursor}`;
 }
 

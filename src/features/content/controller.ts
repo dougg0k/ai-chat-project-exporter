@@ -158,7 +158,10 @@ async function fetchChatGptProjectListingChain(
 
 		merged = mergeProjectListings(merged, withBetterProjectName(parsed));
 		if (typeof parsed.nextCursor === "string" && parsed.nextCursor) {
-			const nextUrl = buildChatGptProjectListingUrl(projectId, parsed.nextCursor);
+			const nextUrl = buildChatGptProjectListingUrl(
+				projectId,
+				parsed.nextCursor,
+			);
 			if (!seen.has(nextUrl)) queue.push(nextUrl);
 		}
 	}
