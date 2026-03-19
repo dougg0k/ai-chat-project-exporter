@@ -46,4 +46,4 @@ The extension only stores local configuration needed for usability.
 
 ## Not planned
 
-- Full chats backup - However, it would be possible.
+- All chats in account backup - However, it would be possible.
