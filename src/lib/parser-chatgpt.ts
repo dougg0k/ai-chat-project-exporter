@@ -318,6 +318,12 @@ export function parseChatGptProject(
 		projectId,
 		projectName: `Project-${projectId}`,
 		chats,
+		nextCursor:
+			typeof data.cursor === "string"
+				? data.cursor
+				: data.cursor === null
+					? null
+					: undefined,
 	};
 }
 

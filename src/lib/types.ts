@@ -54,6 +54,7 @@ export interface ProjectListing {
 	projectId: string;
 	projectName: string;
 	chats: ProjectChatRef[];
+	nextCursor?: string | null;
 	fetchContext?: { orgId?: string };
 }
 

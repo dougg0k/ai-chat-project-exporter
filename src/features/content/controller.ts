@@ -31,6 +31,7 @@ import { parseConversation, parseProjectListing } from "../../lib/parser";
 import { parseChatGptTextdocs } from "../../lib/parser-chatgpt";
 import { replaceConversationTextdocs } from "../../lib/chatgpt-textdocs";
 import {
+	buildChatGptProjectListingUrl,
 	mergeProjectListings,
 	sortChatGptProjectListingUrls,
 } from "../../lib/project-listing";
@@ -134,6 +135,35 @@ function withBetterProjectName(project: ProjectListing): ProjectListing {
 	return nextName === project.projectName
 		? project
 		: { ...project, projectName: nextName };
+}
+
+async function fetchChatGptProjectListingChain(
+	projectId: string,
+	seedUrls: string[],
+): Promise<ProjectListing | null> {
+	const queue = sortChatGptProjectListingUrls(Array.from(new Set(seedUrls)));
+	const seen = new Set<string>();
+	let merged: ProjectListing | null = null;
+
+	while (queue.length > 0) {
+		const url = queue.shift();
+		if (!url || seen.has(url)) continue;
+		seen.add(url);
+
+		const result = await pageFetch(url).catch(() => null);
+		if (!result?.ok || !result.text.trim()) continue;
+		const parsed = parseProjectListing(url, result.text);
+		if (!parsed || parsed.provider !== "chatgpt") continue;
+		if (parsed.projectId !== projectId) continue;
+
+		merged = mergeProjectListings(merged, withBetterProjectName(parsed));
+		if (typeof parsed.nextCursor === "string" && parsed.nextCursor) {
+			const nextUrl = buildChatGptProjectListingUrl(projectId, parsed.nextCursor);
+			if (!seen.has(nextUrl)) queue.push(nextUrl);
+		}
+	}
+
+	return merged;
 }
 
 function firstNonGenericTitleSegment(value: string): string | null {
@@ -533,6 +563,16 @@ function getCurrentChatGptLoadingStatus(): string | null {
 	return "Content are still loading, please wait...";
 }
 
+function getCurrentChatGptProjectLoadingStatus(): string | null {
+	if (inferProvider(currentUrl()) !== "chatgpt") return null;
+	if (inferPageKind(currentUrl()) !== "project") return null;
+	const activeProject = getActiveProjectForPage();
+	if (!activeProject) return null;
+	if (activeProject.provider !== "chatgpt") return null;
+	if (activeProject.nextCursor == null) return null;
+	return "List is not fully loaded. Please scroll all the way to the end, before exporting.";
+}
+
 function handleRawCapture(message: RawCaptureMessage) {
 	void browser.runtime.sendMessage(message).catch(() => undefined);
 
@@ -647,7 +687,9 @@ function buildContext(waiting = false): UiContext {
 	const pageKind = inferPageKind(currentUrl());
 	const activeConversation = getActiveConversationForPage();
 	const activeProject = getActiveProjectForPage();
-	const loadingStatus = getCurrentChatGptLoadingStatus();
+	const chatLoadingStatus = getCurrentChatGptLoadingStatus();
+	const projectLoadingStatus = getCurrentChatGptProjectLoadingStatus();
+	const loadingStatus = projectLoadingStatus ?? chatLoadingStatus;
 
 	return {
 		provider,
@@ -769,21 +811,31 @@ async function ensureActiveProjectData(): Promise<ProjectListing | null> {
 					? [listingUrl]
 					: [];
 
-		for (const url of listingUrls) {
-			const orgId = extractClaudeOrgIdFromUrl(url);
-			if (orgId && orgId !== lastClaudeOrgId) {
-				lastClaudeOrgId = orgId;
-				void setLastClaudeOrgId(orgId).catch(() => undefined);
+		if (provider === "chatgpt") {
+			const projectId = extractCurrentProjectId(currentUrl());
+			if (projectId && listingUrls.length > 0) {
+				const nextProject = await fetchChatGptProjectListingChain(
+					projectId,
+					listingUrls,
+				);
+				if (nextProject) {
+					latestProject = mergeProjectListings(latestProject, nextProject);
+				}
 			}
-			const result = await pageFetch(url).catch(() => null);
-			if (!result?.ok || !result.text.trim()) continue;
-			const parsed = parseProjectListing(url, result.text);
-			if (!parsed) continue;
-			const nextProject = withBetterProjectName(parsed);
-			latestProject =
-				provider === "chatgpt"
-					? mergeProjectListings(latestProject, nextProject)
-					: nextProject;
+		} else {
+			for (const url of listingUrls) {
+				const orgId = extractClaudeOrgIdFromUrl(url);
+				if (orgId && orgId !== lastClaudeOrgId) {
+					lastClaudeOrgId = orgId;
+					void setLastClaudeOrgId(orgId).catch(() => undefined);
+				}
+				const result = await pageFetch(url).catch(() => null);
+				if (!result?.ok || !result.text.trim()) continue;
+				const parsed = parseProjectListing(url, result.text);
+				if (!parsed) continue;
+				const nextProject = withBetterProjectName(parsed);
+				latestProject = nextProject;
+			}
 		}
 
 		const active = getActiveProjectForPage();
@@ -944,6 +996,15 @@ function normalizeSelectedConversation(
 
 export async function exportProject(format: ExportFormat): Promise<void> {
 	let activeProject = await ensureActiveProjectData();
+
+	if (
+		activeProject?.provider === "chatgpt" &&
+		activeProject.nextCursor != null
+	) {
+		throw new Error(
+			"List is not fully loaded. Please scroll all the way to the end, before exporting.",
+		);
+	}
 
 	if (
 		!activeProject &&

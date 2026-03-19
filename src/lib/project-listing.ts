@@ -61,9 +61,22 @@ export function mergeProjectListings(
 		projectName: isBetterProjectName(incoming.projectName)
 			? incoming.projectName
 			: existing.projectName,
+		nextCursor:
+			incoming.nextCursor !== undefined
+				? incoming.nextCursor
+				: existing.nextCursor,
 		fetchContext: incoming.fetchContext ?? existing.fetchContext,
 		chats: mergedChats,
 	};
+}
+
+export function buildChatGptProjectListingUrl(
+	projectId: string,
+	cursor: string,
+): string {
+	const encodedCursor =
+		cursor === "0" ? cursor : encodeURIComponent(cursor);
+	return `https://chatgpt.com/backend-api/gizmos/${projectId}/conversations?cursor=${encodedCursor}`;
 }
 
 export function projectListingSignature(
@@ -73,6 +86,7 @@ export function projectListingSignature(
 	return [
 		project.provider,
 		project.projectId,
+		String(project.nextCursor ?? "null"),
 		...project.chats.map((chat) => `${chat.id}:${chat.title}`),
 	].join("|");
 }

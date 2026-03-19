@@ -434,7 +434,7 @@ async function captureProjectFromTab(
 				unchangedCount = 0;
 			} else if (bestProject.provider !== "chatgpt") {
 				return bestProject;
-			} else if (++unchangedCount >= 2) {
+			} else if (bestProject.nextCursor === null && ++unchangedCount >= 2) {
 				return bestProject;
 			}
 		}
