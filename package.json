@@ -1,7 +1,7 @@
 {
 	"name": "ai-chat-project-exporter",
 	"private": true,
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"type": "module",
 	"scripts": {
 		"postinstall": "wxt prepare",
@@ -10,7 +10,8 @@
 		"build": "wxt build",
 		"build:firefox": "wxt build -b firefox",
 		"zip": "wxt zip",
-		"zip:firefox": "wxt zip -b firefox"
+		"zip:firefox": "wxt zip -b firefox",
+		"format": "biome format --write"
 	},
 	"dependencies": {
 		"dompurify": "latest",
