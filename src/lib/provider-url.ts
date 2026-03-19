@@ -14,7 +14,6 @@ export function isChatGptConversationUrl(url: string): boolean {
 	);
 }
 
-
 export function isChatGptTextdocsUrl(url: string): boolean {
 	return /^https:\/\/chatgpt\.com\/backend-api\/conversation\/[A-Za-z0-9-]+\/textdocs(?:\?.*)?$/.test(
 		url,

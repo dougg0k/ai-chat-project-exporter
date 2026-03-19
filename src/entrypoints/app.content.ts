@@ -62,10 +62,12 @@ export default defineContentScript({
 			subtree: true,
 		});
 		void mountIfNeeded();
-		void browser.runtime.sendMessage({
-			type: "CONTENT_READY",
-			url: window.location.href,
-		} satisfies RuntimeMessage).catch(() => undefined);
+		void browser.runtime
+			.sendMessage({
+				type: "CONTENT_READY",
+				url: window.location.href,
+			} satisfies RuntimeMessage)
+			.catch(() => undefined);
 
 		browser.runtime.onMessage.addListener(
 			(message: RuntimeMessage, _sender, sendResponse) => {
@@ -159,10 +161,8 @@ export default defineContentScript({
 			},
 		);
 
-		window.addEventListener(
-			"beforeunload",
-			() => mountObserver.disconnect(),
-			{ once: true },
-		);
+		window.addEventListener("beforeunload", () => mountObserver.disconnect(), {
+			once: true,
+		});
 	},
 });

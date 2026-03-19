@@ -113,7 +113,10 @@ function transformMessage(
 		);
 		const suffix = parsed.suffix.trim();
 		if (!artifact) {
-			const prefixOnly = normalizeVisiblePrefix(parsed.prefix, inferTitleFromPrefix(parsed.prefix) || "Canvas");
+			const prefixOnly = normalizeVisiblePrefix(
+				parsed.prefix,
+				inferTitleFromPrefix(parsed.prefix) || "Canvas",
+			);
 			return {
 				...message,
 				markdown: [prefixOnly, suffix].filter(Boolean).join("\n\n").trim(),
@@ -218,7 +221,6 @@ function materializeCanvas(
 
 	return null;
 }
-
 
 function materializeChatGptTextdocs(
 	conversation: Conversation,

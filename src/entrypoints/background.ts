@@ -4,7 +4,10 @@ import { buildProjectChatPageUrls } from "../lib/page-context";
 import { parseConversation, parseProjectListing } from "../lib/parser";
 import { replaceConversationTextdocs } from "../lib/chatgpt-textdocs";
 import { parseChatGptTextdocs } from "../lib/parser-chatgpt";
-import { mergeProjectListings, projectListingSignature } from "../lib/project-listing";
+import {
+	mergeProjectListings,
+	projectListingSignature,
+} from "../lib/project-listing";
 import type {
 	CollectProjectConversationsMessage,
 	CollectProjectListingMessage,
@@ -28,7 +31,11 @@ type SenderResponse = {
 	conversations?: Conversation[];
 };
 
-type TabSignal = "raw-capture" | "content-ready" | "ui-context-changed" | "tab-updated";
+type TabSignal =
+	| "raw-capture"
+	| "content-ready"
+	| "ui-context-changed"
+	| "tab-updated";
 
 type Waiter = {
 	resolve: (signal: TabSignal) => void;
@@ -37,7 +44,10 @@ type Waiter = {
 
 const conversationsByTab = new Map<number, Conversation | null>();
 const projectsByTab = new Map<number, ProjectListing | null>();
-const pendingChatGptTextdocsByTab = new Map<number, Map<string, import("../lib/types").ChatGptTextdoc[]>>();
+const pendingChatGptTextdocsByTab = new Map<
+	number,
+	Map<string, import("../lib/types").ChatGptTextdoc[]>
+>();
 const observedChatGptTextdocsByTab = new Map<number, Set<string>>();
 const contentReadyUrlsByTab = new Map<number, string>();
 const waitersByTab = new Map<number, Set<Waiter>>();
@@ -79,19 +89,28 @@ export default defineBackground(() => {
 	);
 
 	browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
-		if (changeInfo.status === "complete" || typeof changeInfo.url === "string") {
+		if (
+			changeInfo.status === "complete" ||
+			typeof changeInfo.url === "string"
+		) {
 			notifyTabWaiters(tabId, "tab-updated");
 		}
 	});
 });
 
-function markObservedConversationTextdocs(tabId: number, conversationId: string) {
+function markObservedConversationTextdocs(
+	tabId: number,
+	conversationId: string,
+) {
 	const observed = observedChatGptTextdocsByTab.get(tabId) ?? new Set<string>();
 	observed.add(conversationId);
 	observedChatGptTextdocsByTab.set(tabId, observed);
 }
 
-function hasObservedConversationTextdocs(tabId: number, conversationId: string): boolean {
+function hasObservedConversationTextdocs(
+	tabId: number,
+	conversationId: string,
+): boolean {
 	return observedChatGptTextdocsByTab.get(tabId)?.has(conversationId) ?? false;
 }
 
@@ -107,7 +126,10 @@ function stashPendingConversationTextdocs(
 	pendingChatGptTextdocsByTab.set(tabId, byConversation);
 }
 
-function clearPendingConversationTextdocs(tabId: number, conversationId: string) {
+function clearPendingConversationTextdocs(
+	tabId: number,
+	conversationId: string,
+) {
 	const byConversation = pendingChatGptTextdocsByTab.get(tabId);
 	if (!byConversation) return;
 	byConversation.delete(conversationId);
@@ -153,7 +175,10 @@ function recordRawCapture(
 		pageUrl ?? message.url,
 	);
 	if (conversation)
-		conversationsByTab.set(tabId, applyPendingConversationTextdocs(tabId, conversation));
+		conversationsByTab.set(
+			tabId,
+			applyPendingConversationTextdocs(tabId, conversation),
+		);
 	const textdocs = parseChatGptTextdocs(message.url, message.text);
 	if (textdocs) {
 		markObservedConversationTextdocs(tabId, textdocs.conversationId);
@@ -168,10 +193,18 @@ function recordRawCapture(
 				conversationsByTab.set(tabId, updated);
 				clearPendingConversationTextdocs(tabId, textdocs.conversationId);
 			} else {
-				stashPendingConversationTextdocs(tabId, textdocs.conversationId, textdocs.textdocs);
+				stashPendingConversationTextdocs(
+					tabId,
+					textdocs.conversationId,
+					textdocs.textdocs,
+				);
 			}
 		} else {
-			stashPendingConversationTextdocs(tabId, textdocs.conversationId, textdocs.textdocs);
+			stashPendingConversationTextdocs(
+				tabId,
+				textdocs.conversationId,
+				textdocs.textdocs,
+			);
 		}
 	}
 	const project = parseProjectListing(message.url, message.text);
@@ -349,7 +382,10 @@ function isChatGptConversationReady(
 	return hasObservedConversationTextdocs(tabId, expectedChatId);
 }
 
-function hasPendingChatGptTextdocs(tabId: number, conversationId: string): boolean {
+function hasPendingChatGptTextdocs(
+	tabId: number,
+	conversationId: string,
+): boolean {
 	const pending = pendingChatGptTextdocsByTab.get(tabId)?.get(conversationId);
 	return Boolean(pending && pending.length > 0);
 }
@@ -535,7 +571,8 @@ function clearTabWaiters(tabId: number) {
 
 function waitForTabSignal(tabId: number, deadline: number): Promise<TabSignal> {
 	const remaining = Math.max(0, deadline - Date.now());
-	if (remaining <= 0) return Promise.reject(new Error("Timed out waiting for tab activity."));
+	if (remaining <= 0)
+		return Promise.reject(new Error("Timed out waiting for tab activity."));
 	return new Promise<TabSignal>((resolve, reject) => {
 		const waiter: Waiter = {
 			resolve: (signal) => {
@@ -553,7 +590,11 @@ function waitForTabSignal(tabId: number, deadline: number): Promise<TabSignal> {
 	});
 }
 
-async function waitForTabUrl(tabId: number, expectedUrl: string, timeoutMs: number) {
+async function waitForTabUrl(
+	tabId: number,
+	expectedUrl: string,
+	timeoutMs: number,
+) {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		const tab = await browser.tabs.get(tabId).catch(() => null);

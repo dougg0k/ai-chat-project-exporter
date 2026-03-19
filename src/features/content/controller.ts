@@ -30,7 +30,10 @@ import {
 import { parseConversation, parseProjectListing } from "../../lib/parser";
 import { parseChatGptTextdocs } from "../../lib/parser-chatgpt";
 import { replaceConversationTextdocs } from "../../lib/chatgpt-textdocs";
-import { mergeProjectListings, sortChatGptProjectListingUrls } from "../../lib/project-listing";
+import {
+	mergeProjectListings,
+	sortChatGptProjectListingUrls,
+} from "../../lib/project-listing";
 import { unwrapRecordedOrDirectJson } from "../../lib/recorded";
 import {
 	getLastClaudeOrgId,
@@ -52,7 +55,10 @@ import type {
 
 let latestConversation: Conversation | null = null;
 let latestProject: ProjectListing | null = null;
-const chatGptTextdocsByConversation = new Map<string, import("../../lib/types").ChatGptTextdoc[]>();
+const chatGptTextdocsByConversation = new Map<
+	string,
+	import("../../lib/types").ChatGptTextdoc[]
+>();
 const observedChatGptConversationApis = new Set<string>();
 const observedChatGptTextdocs = new Set<string>();
 const chatGptConversationReadyWaiters = new Set<{
@@ -485,8 +491,10 @@ function conversationMatchesCurrentChat(
 
 function isCurrentChatGptConversationReady(conversationId: string): boolean {
 	return (
-		conversationMatchesCurrentChat(getActiveConversationForPage(), conversationId) &&
-		hasObservedConversationTextdocs(conversationId)
+		conversationMatchesCurrentChat(
+			getActiveConversationForPage(),
+			conversationId,
+		) && hasObservedConversationTextdocs(conversationId)
 	);
 }
 
@@ -568,8 +576,6 @@ function handleRawCapture(message: RawCaptureMessage) {
 	emitUiContextChanged();
 }
 
-
-
 function stashConversationTextdocs(
 	conversationId: string,
 	textdocs: import("../../lib/types").ChatGptTextdoc[],
@@ -577,9 +583,7 @@ function stashConversationTextdocs(
 	chatGptTextdocsByConversation.set(conversationId, [...textdocs]);
 }
 
-function applyConversationTextdocs(
-	conversation: Conversation,
-): Conversation {
+function applyConversationTextdocs(conversation: Conversation): Conversation {
 	if (conversation.provider !== "chatgpt") return conversation;
 	if (!chatGptTextdocsByConversation.has(conversation.id)) return conversation;
 	const textdocs = chatGptTextdocsByConversation.get(conversation.id) ?? [];
@@ -718,7 +722,10 @@ async function waitForSingleChatConversationForExport(): Promise<Conversation | 
 		return ensureActiveConversationForPage(false);
 	}
 	const activeConversation = getActiveConversationForPage();
-	if (conversationMatchesCurrentChat(activeConversation, currentChatId) && hasObservedConversationTextdocs(currentChatId)) {
+	if (
+		conversationMatchesCurrentChat(activeConversation, currentChatId) &&
+		hasObservedConversationTextdocs(currentChatId)
+	) {
 		return activeConversation;
 	}
 	return waitForCurrentChatGptConversationReady(currentChatId);
@@ -747,17 +754,17 @@ async function ensureActiveProjectData(): Promise<ProjectListing | null> {
 		const listingUrls =
 			provider === "chatgpt"
 				? (() => {
-					const projectId = extractCurrentProjectId(currentUrl());
-					const matchingObserved = observed.filter((url) =>
-						projectId
-							? url.includes(`/backend-api/gizmos/${projectId}/conversations`)
-							: false,
-					);
-					const urls = listingUrl
-						? [...matchingObserved, listingUrl]
-						: matchingObserved;
-					return sortChatGptProjectListingUrls(Array.from(new Set(urls)));
-				})()
+						const projectId = extractCurrentProjectId(currentUrl());
+						const matchingObserved = observed.filter((url) =>
+							projectId
+								? url.includes(`/backend-api/gizmos/${projectId}/conversations`)
+								: false,
+						);
+						const urls = listingUrl
+							? [...matchingObserved, listingUrl]
+							: matchingObserved;
+						return sortChatGptProjectListingUrls(Array.from(new Set(urls)));
+					})()
 				: listingUrl
 					? [listingUrl]
 					: [];

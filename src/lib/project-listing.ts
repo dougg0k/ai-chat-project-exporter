@@ -90,5 +90,7 @@ export function sortChatGptProjectListingUrls(urls: string[]): string[] {
 			return { url, numeric: Number.POSITIVE_INFINITY };
 		}
 	});
-	return withCursor.sort((a, b) => a.numeric - b.numeric).map((entry) => entry.url);
+	return withCursor
+		.sort((a, b) => a.numeric - b.numeric)
+		.map((entry) => entry.url);
 }
