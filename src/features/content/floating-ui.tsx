@@ -1,17 +1,17 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { ActionPanel } from "../shared/action-panel";
-import { SelectExportModal } from "../shared/select-export-modal";
-import { LogoIcon } from "../../lib/logo";
 import { deriveConversationTurns } from "../../lib/chat-selection";
+import { LogoIcon } from "../../lib/Logo";
+import type { FloatingButtonPosition } from "../../lib/storage";
 import {
 	getFloatingButtonPosition,
 	getPreferredExportFormat,
 	setFloatingButtonPosition,
 	setPreferredExportFormat,
 } from "../../lib/storage";
-import type { FloatingButtonPosition } from "../../lib/storage";
 import type { Conversation, ExportFormat, UiContext } from "../../lib/types";
+import { ActionPanel } from "../shared/action-panel";
+import { SelectExportModal } from "../shared/select-export-modal";
 
 const DEFAULT_OFFSET = { right: 28, bottom: 22 } as const;
 const DEFAULT_BUTTON_SIZE = { width: 114, height: 42 } as const;

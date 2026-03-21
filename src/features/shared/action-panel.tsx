@@ -1,5 +1,5 @@
 import type React from "react";
-import { LogoIcon } from "../../lib/logo";
+import { LogoIcon } from "../../lib/Logo";
 import type { ExportFormat, PageKind } from "../../lib/types";
 
 export interface ActionPanelProps {

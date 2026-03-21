@@ -1,5 +1,3 @@
-
-
 export function LogoIcon(props: { size?: number }) {
 	const size = props.size ?? 20;
 	return (

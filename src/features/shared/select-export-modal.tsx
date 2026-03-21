@@ -1,7 +1,7 @@
 import * as React from "react";
-import type { ExportFormat } from "../../lib/types";
-import { renderMarkdownFragment } from "../../lib/export-format";
 import type { ConversationTurn } from "../../lib/chat-selection";
+import { renderMarkdownFragment } from "../../lib/export-format";
+import type { ExportFormat } from "../../lib/types";
 
 export interface SelectExportModalProps {
 	format: ExportFormat;
@@ -424,16 +424,6 @@ const detailTextStyle: React.CSSProperties = {
 	border: "1px solid rgba(15,23,42,0.08)",
 };
 
-const _noticeStyle: React.CSSProperties = {
-	fontSize: 12,
-	color: "#92400e",
-	background: "#fffbeb",
-	border: "1px solid #fcd34d",
-	borderRadius: 10,
-	padding: "8px 10px",
-	marginBottom: 10,
-	lineHeight: 1.45,
-};
 const richDetailCss = `
 .select-export-modal-rich {
 	white-space: normal;

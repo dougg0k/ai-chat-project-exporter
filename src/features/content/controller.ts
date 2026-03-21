@@ -497,10 +497,6 @@ function markObservedConversationApi(conversationId: string) {
 	observedChatGptConversationApis.add(conversationId);
 }
 
-function _hasObservedConversationApi(conversationId: string): boolean {
-	return observedChatGptConversationApis.has(conversationId);
-}
-
 function markObservedConversationTextdocs(conversationId: string) {
 	observedChatGptTextdocs.add(conversationId);
 	flushChatGptConversationReadyWaiters();
