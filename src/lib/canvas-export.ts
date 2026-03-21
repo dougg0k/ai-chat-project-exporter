@@ -5,7 +5,6 @@ import {
 } from "./export-format";
 import { buildConversationFilename, safeFilenamePart } from "./file";
 import type {
-	ChatGptTextdoc,
 	Conversation,
 	ExportFormat,
 	GeneratedDocument,
@@ -550,7 +549,7 @@ export function buildConversationBundle(
 } {
 	const prepared = prepareConversationExport(conversation, format, now);
 	return {
-		mainFilename: prepared.mainFilename,
+		mainFilename: prepared.mainFilename.toLowerCase(),
 		mainContent: renderConversation(prepared.conversation, format),
 		canvases: prepared.canvases,
 	};

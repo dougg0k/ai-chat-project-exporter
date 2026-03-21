@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { browser } from "wxt/browser";
 import { buildConversationBundle } from "../../lib/canvas-export";
 import { filterConversationToMessageIds } from "../../lib/chat-selection";
+import { replaceConversationTextdocs } from "../../lib/chatgpt-textdocs";
 import { cleanVisibleMarkdown } from "../../lib/clean-text";
 import {
 	collectObservedApiUrls,
@@ -29,7 +30,6 @@ import {
 } from "../../lib/page-context";
 import { parseConversation, parseProjectListing } from "../../lib/parser";
 import { parseChatGptTextdocs } from "../../lib/parser-chatgpt";
-import { replaceConversationTextdocs } from "../../lib/chatgpt-textdocs";
 import {
 	buildChatGptProjectListingUrl,
 	mergeProjectListings,
@@ -1057,7 +1057,8 @@ export async function exportProject(format: ExportFormat): Promise<void> {
 
 		const zip = new JSZip();
 		const now = new Date();
-		const folderName = `${safeFilenamePart(activeProject.projectName)}_${capitalizeWord(activeProject.provider)}_${buildDateTime(now)}`;
+		const folderName =
+			`${safeFilenamePart(activeProject.projectName)}_${capitalizeWord(activeProject.provider)}_${buildDateTime(now)}`.toLowerCase();
 		const sorted = conversations.slice().sort((a, b) => {
 			const ai =
 				activeProject.chats.find((chat) => chat.id === a.id)?.order ?? 0;

@@ -15,7 +15,7 @@ export function buildConversationFilename(
 	ext: string,
 	now: Date,
 ): string {
-	return `${safeFilenamePart(title)}_${provider}_chat-export_${buildDateTime(now)}.${ext}`;
+	return `${safeFilenamePart(title)}_${provider}_chat-export_${buildDateTime(now)}.${ext}`.toLowerCase();
 }
 
 export function buildProjectZipFilename(
@@ -25,7 +25,7 @@ export function buildProjectZipFilename(
 	provider: ProviderName,
 ): string {
 	const suffix = format === "html" ? "_html" : "_md";
-	return `${safeFilenamePart(projectName)}_${provider}_${buildDateTime(now)}${suffix}.zip`;
+	return `${safeFilenamePart(projectName)}_${provider}_${buildDateTime(now)}${suffix}.zip`.toLowerCase();
 }
 
 export function buildDateTime(now = new Date()) {
