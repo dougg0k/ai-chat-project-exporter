@@ -1,4 +1,4 @@
-import React from "react";
+
 
 export function LogoIcon(props: { size?: number }) {
 	const size = props.size ?? 20;

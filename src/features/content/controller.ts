@@ -497,7 +497,7 @@ function markObservedConversationApi(conversationId: string) {
 	observedChatGptConversationApis.add(conversationId);
 }
 
-function hasObservedConversationApi(conversationId: string): boolean {
+function _hasObservedConversationApi(conversationId: string): boolean {
 	return observedChatGptConversationApis.has(conversationId);
 }
 

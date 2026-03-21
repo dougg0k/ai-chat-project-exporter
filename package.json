@@ -11,7 +11,8 @@
 		"build:firefox": "wxt build -b firefox",
 		"zip": "wxt zip",
 		"zip:firefox": "wxt zip -b firefox",
-		"format": "biome format --write"
+		"format": "biome format --write",
+		"lint": "biome lint --write"
 	},
 	"dependencies": {
 		"dompurify": "latest",
@@ -21,13 +22,13 @@
 		"react-dom": "latest"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.4.7",
+		"@biomejs/biome": "2.4.8",
 		"@types/markdown-it": "latest",
 		"@types/react": "latest",
 		"@types/react-dom": "latest",
 		"@wxt-dev/auto-icons": "latest",
 		"@wxt-dev/module-react": "latest",
 		"typescript": "latest",
-		"wxt": "0.20.19"
+		"wxt": "0.20.20"
 	}
 }

@@ -18,7 +18,6 @@ import type {
 	ProjectListing,
 	RawCaptureMessage,
 	RuntimeMessage,
-	UiContextChangedMessage,
 } from "../lib/types";
 
 const TAB_URL_TIMEOUT_MS = 15000;

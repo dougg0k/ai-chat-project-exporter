@@ -424,7 +424,7 @@ const detailTextStyle: React.CSSProperties = {
 	border: "1px solid rgba(15,23,42,0.08)",
 };
 
-const noticeStyle: React.CSSProperties = {
+const _noticeStyle: React.CSSProperties = {
 	fontSize: 12,
 	color: "#92400e",
 	background: "#fffbeb",
