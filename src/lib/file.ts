@@ -2,6 +2,7 @@ import type { ProviderName } from "./types";
 
 export function safeFilenamePart(value: string): string {
 	return value
+		.toLowerCase()
 		.replace(/[/:*?"<>|]+/g, "-")
 		.replace(/\s+/g, "-")
 		.replace(/-+/g, "-")

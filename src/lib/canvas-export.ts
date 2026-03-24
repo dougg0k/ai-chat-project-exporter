@@ -267,6 +267,7 @@ function resolveChatGptCanvasArtifact(
 	const candidates = [
 		typeof payload?.name === "string" ? payload.name : "",
 		inferTitleFromPrefix(prefix) ?? "",
+		inferTitleFromCanvasPayload(payload) ?? "",
 	];
 	for (const candidate of candidates) {
 		const key = normalizeCanvasLookupKey(candidate);
@@ -278,7 +279,13 @@ function resolveChatGptCanvasArtifact(
 }
 
 function normalizeCanvasLookupKey(value: string): string {
-	return value.replace(/\s+/g, " ").trim().toLowerCase();
+	return value
+		.normalize("NFKD")
+		.replace(/[‐‑‒–—―-]+/g, " ")
+		.replace(/[^\p{L}\p{N}]+/gu, " ")
+		.replace(/\s+/g, " ")
+		.trim()
+		.toLowerCase();
 }
 
 function materializeGeneratedDocuments(
@@ -478,6 +485,23 @@ function inferTitleFromMarkdown(markdown: string): string | null {
 	return value || null;
 }
 
+function inferTitleFromCanvasPayload(payload: any): string | null {
+	if (!payload || typeof payload !== "object") return null;
+	if (typeof payload.name === "string" && payload.name.trim())
+		return payload.name.trim();
+	if (!Array.isArray(payload.updates)) return null;
+
+	const candidate = [...payload.updates]
+		.reverse()
+		.find(
+			(update) =>
+				typeof update?.replacement === "string" &&
+				looksLikeCanvasDocument(update?.replacement, update?.pattern),
+		);
+	if (!candidate) return null;
+	return inferTitleFromMarkdown(cleanVisibleMarkdown(candidate.replacement));
+}
+
 function looksLikeCanvasDocument(
 	replacement: string,
 	pattern?: string,
@@ -509,12 +533,76 @@ function findCanvasPayload(
 		}
 	}
 
-	for (let i = 0; i < markdown.length; i += 1) {
-		if (markdown[i] !== "{") continue;
-		const prefix = markdown.slice(0, i);
-		const candidate = markdown.slice(i).trim();
-		const payload = tryParseCanvasPayload(candidate);
-		if (payload) return { prefix, payload, suffix: "" };
+	return findInlineCanvasPayload(markdown);
+}
+
+function findInlineCanvasPayload(
+	markdown: string,
+): { prefix: string; payload: any; suffix: string } | null {
+	let start = markdown.indexOf("{");
+	while (start !== -1) {
+		const candidate = extractBalancedJsonObject(markdown, start);
+		if (candidate) {
+			const payload = tryParseCanvasPayload(candidate.text);
+			if (payload) {
+				return {
+					prefix: markdown.slice(0, start),
+					payload,
+					suffix: markdown.slice(candidate.end),
+				};
+			}
+		}
+		start = markdown.indexOf("{", start + 1);
+	}
+
+	return null;
+}
+
+function extractBalancedJsonObject(
+	text: string,
+	start: number,
+): { text: string; end: number } | null {
+	if (text[start] !== "{") return null;
+
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+
+	for (let i = start; i < text.length; i += 1) {
+		const char = text[i];
+
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+				continue;
+			}
+			if (char === "\\") {
+				escaped = true;
+				continue;
+			}
+			if (char === '"') inString = false;
+			continue;
+		}
+
+		if (char === '"') {
+			inString = true;
+			continue;
+		}
+
+		if (char === "{") {
+			depth += 1;
+			continue;
+		}
+
+		if (char !== "}") continue;
+		depth -= 1;
+		if (depth === 0) {
+			return {
+				text: text.slice(start, i + 1),
+				end: i + 1,
+			};
+		}
+		if (depth < 0) return null;
 	}
 
 	return null;
