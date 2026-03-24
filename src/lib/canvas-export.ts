@@ -33,8 +33,10 @@ export function prepareConversationExport(
 	conversation: Conversation,
 	format: ExportFormat,
 	now = new Date(),
+	options?: { nestAssetsUnderChatFolder?: boolean },
 ): PreparedConversationExport {
 	const chatFolder = safeFilenamePart(conversation.title) || "untitled-chat";
+	const nestAssetsUnderChatFolder = options?.nestAssetsUnderChatFolder ?? true;
 	const ext = format === "html" ? "html" : "md";
 	const mainFilename = buildConversationFilename(
 		conversation.title,
@@ -49,6 +51,7 @@ export function prepareConversationExport(
 		format,
 		chatFolder,
 		usedPaths,
+		nestAssetsUnderChatFolder,
 	);
 	const chatGptCanvasResolver =
 		conversation.provider === "chatgpt"
@@ -63,6 +66,7 @@ export function prepareConversationExport(
 			chatFolder,
 			usedPaths,
 			canvases,
+			nestAssetsUnderChatFolder,
 			chatGptCanvasResolver,
 		),
 	);
@@ -71,6 +75,7 @@ export function prepareConversationExport(
 		format,
 		chatFolder,
 		usedPaths,
+		nestAssetsUnderChatFolder,
 	);
 	const appendixMarkdown = buildGeneratedDocumentsAppendix(
 		generatedDocumentAssets,
@@ -97,6 +102,7 @@ function transformMessage(
 	chatFolder: string,
 	usedPaths: Set<string>,
 	canvases: CanvasAsset[],
+	nestAssetsUnderChatFolder: boolean,
 	chatGptCanvasResolver?: Map<string, CanvasAsset>,
 ): Message {
 	if (message.role !== "assistant") return message;
@@ -137,6 +143,7 @@ function transformMessage(
 		chatFolder,
 		usedPaths,
 		format,
+		nestAssetsUnderChatFolder,
 	);
 	if (!artifact) return message;
 	canvases.push(artifact);
@@ -169,6 +176,7 @@ function materializeCanvas(
 	chatFolder: string,
 	usedPaths: Set<string>,
 	format: ExportFormat,
+	nestAssetsUnderChatFolder: boolean,
 ): CanvasAsset | null {
 	if (!payload || typeof payload !== "object") return null;
 
@@ -185,6 +193,7 @@ function materializeCanvas(
 			chatFolder,
 			usedPaths,
 			format,
+			nestAssetsUnderChatFolder,
 			folderName: "canvas",
 			label: "Canvas",
 		});
@@ -213,6 +222,7 @@ function materializeCanvas(
 			chatFolder,
 			usedPaths,
 			format,
+			nestAssetsUnderChatFolder,
 			folderName: "canvas",
 			label: "Canvas",
 		});
@@ -226,6 +236,7 @@ function materializeChatGptTextdocs(
 	format: ExportFormat,
 	chatFolder: string,
 	usedPaths: Set<string>,
+	nestAssetsUnderChatFolder: boolean,
 ): CanvasAsset[] {
 	if (conversation.provider !== "chatgpt") return [];
 	const textdocs = conversation.chatGptTextdocs ?? [];
@@ -242,6 +253,7 @@ function materializeChatGptTextdocs(
 				chatFolder,
 				usedPaths,
 				format,
+				nestAssetsUnderChatFolder,
 				folderName: "canvas",
 				label: "Canvas",
 			});
@@ -267,7 +279,6 @@ function resolveChatGptCanvasArtifact(
 	const candidates = [
 		typeof payload?.name === "string" ? payload.name : "",
 		inferTitleFromPrefix(prefix) ?? "",
-		inferTitleFromCanvasPayload(payload) ?? "",
 	];
 	for (const candidate of candidates) {
 		const key = normalizeCanvasLookupKey(candidate);
@@ -279,13 +290,7 @@ function resolveChatGptCanvasArtifact(
 }
 
 function normalizeCanvasLookupKey(value: string): string {
-	return value
-		.normalize("NFKD")
-		.replace(/[‐‑‒–—―-]+/g, " ")
-		.replace(/[^\p{L}\p{N}]+/gu, " ")
-		.replace(/\s+/g, " ")
-		.trim()
-		.toLowerCase();
+	return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function materializeGeneratedDocuments(
@@ -293,6 +298,7 @@ function materializeGeneratedDocuments(
 	format: ExportFormat,
 	chatFolder: string,
 	usedPaths: Set<string>,
+	nestAssetsUnderChatFolder: boolean,
 ): CanvasAsset[] {
 	return documents
 		.map((document) => {
@@ -306,6 +312,7 @@ function materializeGeneratedDocuments(
 				chatFolder,
 				usedPaths,
 				format,
+				nestAssetsUnderChatFolder,
 				folderName: "documents",
 				label: "Generated Document",
 				sourceRelativePath: document.relativeOutputPath || document.filename,
@@ -348,6 +355,7 @@ type AssetBuildOptions = {
 	chatFolder: string;
 	usedPaths: Set<string>;
 	format: ExportFormat;
+	nestAssetsUnderChatFolder: boolean;
 	folderName: "canvas" | "documents";
 	label: "Canvas" | "Generated Document";
 	sourceRelativePath?: string;
@@ -362,6 +370,7 @@ function buildAsset(options: AssetBuildOptions): CanvasAsset {
 		chatFolder,
 		usedPaths,
 		format,
+		nestAssetsUnderChatFolder,
 		folderName,
 		label,
 		sourceRelativePath,
@@ -373,6 +382,7 @@ function buildAsset(options: AssetBuildOptions): CanvasAsset {
 		sourceRelativePath,
 		format,
 		usedPaths,
+		nestAssetsUnderChatFolder,
 	);
 	const linkRelativePath =
 		format === "html" ? htmlRelativePath : markdownRelativePath;
@@ -404,20 +414,24 @@ function buildUniqueAssetPaths(
 	sourceRelativePath: string | undefined,
 	format: ExportFormat,
 	usedPaths: Set<string>,
+	nestAssetsUnderChatFolder: boolean,
 ): { markdownRelativePath: string; htmlRelativePath: string } {
 	const preferredBase = sourceRelativePath
 		? normalizeRelativeAssetBase(sourceRelativePath, title)
 		: safeFilenamePart(title) || "untitled-asset";
-	let markdownRelativePath = `${folderName}/${chatFolder}/${preferredBase}.md`;
-	let htmlRelativePath = `${folderName}/${chatFolder}/${preferredBase}.html`;
+	const assetFolder = nestAssetsUnderChatFolder
+		? `${folderName}/${chatFolder}`
+		: folderName;
+	let markdownRelativePath = `${assetFolder}/${preferredBase}.md`;
+	let htmlRelativePath = `${assetFolder}/${preferredBase}.html`;
 	let counter = 2;
 	while (
 		(format === "markdown" && usedPaths.has(markdownRelativePath)) ||
 		(format === "html" && usedPaths.has(htmlRelativePath))
 	) {
 		const withCounter = appendCounterToRelativeBase(preferredBase, counter);
-		markdownRelativePath = `${folderName}/${chatFolder}/${withCounter}.md`;
-		htmlRelativePath = `${folderName}/${chatFolder}/${withCounter}.html`;
+		markdownRelativePath = `${assetFolder}/${withCounter}.md`;
+		htmlRelativePath = `${assetFolder}/${withCounter}.html`;
 		counter += 1;
 	}
 
@@ -485,23 +499,6 @@ function inferTitleFromMarkdown(markdown: string): string | null {
 	return value || null;
 }
 
-function inferTitleFromCanvasPayload(payload: any): string | null {
-	if (!payload || typeof payload !== "object") return null;
-	if (typeof payload.name === "string" && payload.name.trim())
-		return payload.name.trim();
-	if (!Array.isArray(payload.updates)) return null;
-
-	const candidate = [...payload.updates]
-		.reverse()
-		.find(
-			(update) =>
-				typeof update?.replacement === "string" &&
-				looksLikeCanvasDocument(update?.replacement, update?.pattern),
-		);
-	if (!candidate) return null;
-	return inferTitleFromMarkdown(cleanVisibleMarkdown(candidate.replacement));
-}
-
 function looksLikeCanvasDocument(
 	replacement: string,
 	pattern?: string,
@@ -533,36 +530,38 @@ function findCanvasPayload(
 		}
 	}
 
-	return findInlineCanvasPayload(markdown);
-}
-
-function findInlineCanvasPayload(
-	markdown: string,
-): { prefix: string; payload: any; suffix: string } | null {
-	let start = markdown.indexOf("{");
-	while (start !== -1) {
-		const candidate = extractBalancedJsonObject(markdown, start);
-		if (candidate) {
-			const payload = tryParseCanvasPayload(candidate.text);
-			if (payload) {
-				return {
-					prefix: markdown.slice(0, start),
-					payload,
-					suffix: markdown.slice(candidate.end),
-				};
-			}
-		}
-		start = markdown.indexOf("{", start + 1);
+	for (let i = 0; i < markdown.length; i += 1) {
+		if (markdown[i] !== "{") continue;
+		const prefix = markdown.slice(0, i);
+		const extracted = extractLeadingJsonObject(markdown.slice(i));
+		if (!extracted) continue;
+		const payload = tryParseCanvasPayload(extracted.jsonText);
+		if (payload) return { prefix, payload, suffix: extracted.suffix };
 	}
 
 	return null;
 }
 
-function extractBalancedJsonObject(
+function tryParseCanvasPayload(text: string): any | null {
+	if (!text || text[0] !== "{") return null;
+	try {
+		const parsed = JSON.parse(text);
+		if (!parsed || typeof parsed !== "object") return null;
+		if (typeof parsed.name === "string" && typeof parsed.content === "string")
+			return parsed;
+		if (Array.isArray(parsed.updates)) return parsed;
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function extractLeadingJsonObject(
 	text: string,
-	start: number,
-): { text: string; end: number } | null {
-	if (text[start] !== "{") return null;
+): { jsonText: string; suffix: string } | null {
+	if (!text) return null;
+	const start = text.search(/\S/);
+	if (start < 0 || text[start] !== "{") return null;
 
 	let depth = 0;
 	let inString = false;
@@ -598,28 +597,13 @@ function extractBalancedJsonObject(
 		depth -= 1;
 		if (depth === 0) {
 			return {
-				text: text.slice(start, i + 1),
-				end: i + 1,
+				jsonText: text.slice(start, i + 1),
+				suffix: text.slice(i + 1),
 			};
 		}
-		if (depth < 0) return null;
 	}
 
 	return null;
-}
-
-function tryParseCanvasPayload(text: string): any | null {
-	if (!text || text[0] !== "{") return null;
-	try {
-		const parsed = JSON.parse(text);
-		if (!parsed || typeof parsed !== "object") return null;
-		if (typeof parsed.name === "string" && typeof parsed.content === "string")
-			return parsed;
-		if (Array.isArray(parsed.updates)) return parsed;
-		return null;
-	} catch {
-		return null;
-	}
 }
 
 function escapeRegExp(text: string): string {
@@ -630,12 +614,18 @@ export function buildConversationBundle(
 	conversation: Conversation,
 	format: ExportFormat,
 	now = new Date(),
+	options?: { nestAssetsUnderChatFolder?: boolean },
 ): {
 	mainFilename: string;
 	mainContent: string;
 	canvases: CanvasAsset[];
 } {
-	const prepared = prepareConversationExport(conversation, format, now);
+	const prepared = prepareConversationExport(
+		conversation,
+		format,
+		now,
+		options,
+	);
 	return {
 		mainFilename: prepared.mainFilename.toLowerCase(),
 		mainContent: renderConversation(prepared.conversation, format),

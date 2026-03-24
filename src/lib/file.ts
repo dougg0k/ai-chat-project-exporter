@@ -2,12 +2,12 @@ import type { ProviderName } from "./types";
 
 export function safeFilenamePart(value: string): string {
 	return value
-		.toLowerCase()
 		.replace(/[/:*?"<>|]+/g, "-")
 		.replace(/\s+/g, "-")
 		.replace(/-+/g, "-")
 		.replace(/^-|-$/g, "")
-		.slice(0, 120);
+		.slice(0, 120)
+		.toLowerCase();
 }
 
 export function buildConversationFilename(

@@ -943,7 +943,14 @@ export async function exportChat(
 		conversation,
 		selectedMessageIds,
 	);
-	const rendered = buildConversationBundle(filteredConversation, format);
+	const rendered = buildConversationBundle(
+		filteredConversation,
+		format,
+		new Date(),
+		{
+			nestAssetsUnderChatFolder: false,
+		},
+	);
 	if (target === "clipboard") {
 		await copyText(rendered.mainContent);
 		return;

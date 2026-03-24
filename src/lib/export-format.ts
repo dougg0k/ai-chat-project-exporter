@@ -1,7 +1,7 @@
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 import { deriveConversationTurns } from "./chat-selection";
-import type { Conversation, ExportFormat, } from "./types";
+import type { Conversation, ExportFormat } from "./types";
 
 const md = new MarkdownIt({
 	html: true,
