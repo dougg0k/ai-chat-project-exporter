@@ -1,15 +1,24 @@
 import React from "react";
 import { browser } from "wxt/browser";
 import { ActionPanel } from "../shared/action-panel";
-import { DEFAULT_EXPORT_FORMAT } from "../../lib/constants";
-import { inferPageKind } from "../../lib/page-context";
+import { DEFAULT_EXPORT_FORMAT, THEME_MODE_KEY } from "../../lib/constants";
+import { inferPageKind, inferProvider } from "../../lib/page-context";
 import {
 	getPreferredExportFormat,
 	getShowFloatingButton,
+	getThemeMode,
 	setPreferredExportFormat,
 	setShowFloatingButton,
+	setThemeMode,
 } from "../../lib/storage";
-import type { ExportFormat, PageKind, UiContext } from "../../lib/types";
+import { getUiTheme } from "../../lib/theme";
+import type {
+	ExportFormat,
+	PageKind,
+	ProviderName,
+	ThemeMode,
+	UiContext,
+} from "../../lib/types";
 
 const FORMAT_KEY = "preferredExportFormat";
 const FLOATING_KEY = "showFloatingExportButton";
@@ -24,16 +33,28 @@ function initialFloating(): boolean {
 	return localStorage.getItem(FLOATING_KEY) !== "false";
 }
 
+function initialTheme(): ThemeMode {
+	if (typeof localStorage === "undefined") return "light";
+	return localStorage.getItem(THEME_MODE_KEY) === "dark" ? "dark" : "light";
+}
+
 export function PopupApp() {
 	const [format, setFormatState] = React.useState<ExportFormat>(initialFormat);
 	const [pageKind, setPageKind] = React.useState<PageKind>("unknown");
 	const [showFloatingButton, setShowFloatingState] =
 		React.useState<boolean>(initialFloating);
+	const [themeMode, setThemeState] = React.useState<ThemeMode>(initialTheme);
+	const [provider, setProvider] = React.useState<ProviderName | null>(null);
 	const [activeTabId, setActiveTabId] = React.useState<number | null>(null);
 	const [error, setError] = React.useState<string>("");
 	const [status, setStatus] = React.useState<string>("");
+	const [canSkipProjectExport, setCanSkipProjectExport] = React.useState(false);
 	const [loadingSelection, setLoadingSelection] = React.useState(false);
 	const [waiting, setWaiting] = React.useState(false);
+	const theme = React.useMemo(
+		() => getUiTheme(themeMode, provider),
+		[themeMode, provider],
+	);
 
 	const refreshContext = React.useCallback(async () => {
 		if (activeTabId == null) return;
@@ -43,7 +64,9 @@ export function PopupApp() {
 			})) as UiContext;
 			if (ctx?.pageKind) {
 				setPageKind(ctx.pageKind);
+				setProvider(ctx.provider ?? null);
 				setStatus(ctx.projectExportStatus ?? "");
+				setCanSkipProjectExport(Boolean(ctx.projectExportCanSkip));
 				setWaiting(Boolean(ctx.waiting));
 			}
 		} catch {
@@ -64,22 +87,27 @@ export function PopupApp() {
 				}
 				setActiveTabId(tab.id);
 				setPageKind(inferPageKind(tab.url));
+				setProvider(inferProvider(tab.url));
 			} catch {
 				setPageKind("unsupported");
+				setProvider(null);
 			}
 		})();
 
 		void (async () => {
 			try {
-				const [storedFormat, storedFloating] = await Promise.all([
+				const [storedFormat, storedFloating, storedTheme] = await Promise.all([
 					getPreferredExportFormat(),
 					getShowFloatingButton(),
+					getThemeMode(),
 				]);
 				setFormatState(storedFormat);
 				setShowFloatingState(storedFloating);
+				setThemeState(storedTheme);
 				if (typeof localStorage !== "undefined") {
 					localStorage.setItem(FORMAT_KEY, storedFormat);
 					localStorage.setItem(FLOATING_KEY, storedFloating ? "true" : "false");
+					localStorage.setItem(THEME_MODE_KEY, storedTheme);
 				}
 			} catch {
 				// ignore storage sync failures
@@ -92,9 +120,73 @@ export function PopupApp() {
 	}, [refreshContext]);
 
 	React.useEffect(() => {
+		const root = document.documentElement;
+		const body = document.body;
+		root.style.background = theme.appBackground;
+		root.style.colorScheme = themeMode === "dark" ? "dark" : "light";
+		body.style.margin = "0";
+		body.style.background = theme.appBackground;
+		body.style.color = theme.text;
+		body.style.minWidth = "340px";
+	}, [theme, themeMode]);
+
+	React.useEffect(() => {
+		const onChanged = (
+			changes: Record<string, { newValue?: unknown }>,
+			areaName: string,
+		) => {
+			if (areaName !== "local") return;
+			const themeChange = changes[THEME_MODE_KEY];
+			if (!themeChange) return;
+			const nextTheme = themeChange.newValue === "dark" ? "dark" : "light";
+			setThemeState(nextTheme);
+			if (typeof localStorage !== "undefined") {
+				localStorage.setItem(THEME_MODE_KEY, nextTheme);
+			}
+		};
+		browser.storage.onChanged.addListener(onChanged);
+		return () => browser.storage.onChanged.removeListener(onChanged);
+	}, []);
+
+	React.useEffect(() => {
+		const onRuntimeMessage = (
+			message: { type?: string; context?: UiContext },
+			sender: { tab?: { id?: number } },
+		) => {
+			if (message.type !== "UI_CONTEXT_CHANGED") return undefined;
+			if (
+				activeTabId != null &&
+				sender.tab?.id != null &&
+				sender.tab.id !== activeTabId
+			) {
+				return undefined;
+			}
+			const ctx = message.context;
+			if (!ctx) return undefined;
+			setPageKind(ctx.pageKind);
+			setProvider(ctx.provider ?? null);
+			setStatus(ctx.projectExportStatus ?? "");
+			setCanSkipProjectExport(Boolean(ctx.projectExportCanSkip));
+			setWaiting(Boolean(ctx.waiting));
+			return undefined;
+		};
+		browser.runtime.onMessage.addListener(onRuntimeMessage);
+		return () => browser.runtime.onMessage.removeListener(onRuntimeMessage);
+	}, [activeTabId]);
+
+	React.useEffect(() => {
 		const onActivated = (activeInfo: { tabId: number }) => {
 			setActiveTabId(activeInfo.tabId);
-			void refreshContext();
+			void browser.tabs
+				.query({ active: true, currentWindow: true })
+				.then(([tab]) => {
+					if (tab?.url) {
+						setPageKind(inferPageKind(tab.url));
+						setProvider(inferProvider(tab.url));
+					}
+					void refreshContext();
+				})
+				.catch(() => undefined);
 		};
 		const onUpdated = (
 			tabId: number,
@@ -104,6 +196,7 @@ export function PopupApp() {
 			if (tabId !== activeTabId) return;
 			if (!tab.url && !changeInfo.url) return;
 			setPageKind(inferPageKind(changeInfo.url || tab.url || ""));
+			setProvider(inferProvider(changeInfo.url || tab.url || ""));
 			if (changeInfo.status === "complete" || changeInfo.url) {
 				void refreshContext();
 			}
@@ -114,7 +207,10 @@ export function PopupApp() {
 				.then(([tab]) => {
 					if (!tab?.id) return;
 					setActiveTabId(tab.id);
-					if (tab.url) setPageKind(inferPageKind(tab.url));
+					if (tab.url) {
+						setPageKind(inferPageKind(tab.url));
+						setProvider(inferProvider(tab.url));
+					}
 					void refreshContext();
 				})
 				.catch(() => undefined);
@@ -153,6 +249,13 @@ export function PopupApp() {
 		},
 		[activeTabId],
 	);
+
+	const toggleTheme = React.useCallback((next: ThemeMode) => {
+		setThemeState(next);
+		if (typeof localStorage !== "undefined")
+			localStorage.setItem(THEME_MODE_KEY, next);
+		void setThemeMode(next).catch(() => undefined);
+	}, []);
 
 	const runChatAction = React.useCallback(
 		(target: "file" | "clipboard", selectedMessageIds?: string[]) => {
@@ -212,6 +315,20 @@ export function PopupApp() {
 			.catch((err) => setError(err?.message || "Project export failed."));
 	}, [activeTabId, format]);
 
+	const skipProjectExport = React.useCallback(() => {
+		if (activeTabId == null) return;
+		setError("");
+		setCanSkipProjectExport(false);
+		void browser.tabs
+			.sendMessage(activeTabId, { type: "SKIP_PROJECT_EXPORT" })
+			.then((result) => {
+				if (result?.ok === false) {
+					setError(result.error || "Failed to skip chat.");
+				}
+			})
+			.catch((err) => setError(err?.message || "Failed to skip chat."));
+	}, [activeTabId]);
+
 	const openSelectionModal = React.useCallback(() => {
 		if (activeTabId == null) return;
 		setError("");
@@ -235,35 +352,54 @@ export function PopupApp() {
 		<main
 			style={{
 				minWidth: 340,
-				padding: 14,
+				padding: 12,
 				fontFamily: "system-ui, sans-serif",
+				background: theme.appBackground,
+				color: theme.text,
 			}}
 		>
-			<ActionPanel
-				pageKind={pageKind}
-				format={format}
-				onFormatChange={setFormat}
-				onExport={
-					pageKind === "project"
-						? runProjectAction
-						: () => runChatAction("file")
-				}
-				onSelectContentExport={
-					pageKind === "chat" ? openSelectionModal : undefined
-				}
-				onClipboard={
-					pageKind === "chat" ? () => runChatAction("clipboard") : undefined
-				}
-				onToggleFloating={toggleFloating}
-				showFloatingButton={showFloatingButton}
-				statusText={status || undefined}
-				disabled={loadingSelection || waiting}
-			/>
-			{error && (
-				<div style={{ marginTop: 10, fontSize: 12, color: "#b91c1c" }}>
-					{error}
-				</div>
-			)}
+			<div
+				style={{
+					background: theme.panelBackground,
+					border: theme.panelBorder,
+					borderRadius: 16,
+					padding: 14,
+					boxShadow: theme.shadow,
+				}}
+			>
+				<ActionPanel
+					pageKind={pageKind}
+					format={format}
+					themeMode={themeMode}
+					theme={theme}
+					onFormatChange={setFormat}
+					onExport={
+						pageKind === "project"
+							? runProjectAction
+							: () => runChatAction("file")
+					}
+					onSelectContentExport={
+						pageKind === "chat" ? openSelectionModal : undefined
+					}
+					onClipboard={
+						pageKind === "chat" ? () => runChatAction("clipboard") : undefined
+					}
+					onToggleFloating={toggleFloating}
+					onToggleTheme={toggleTheme}
+					showFloatingButton={showFloatingButton}
+					statusText={status || undefined}
+					canSkipProjectExport={canSkipProjectExport}
+					onSkipProjectExport={
+						canSkipProjectExport ? skipProjectExport : undefined
+					}
+					disabled={loadingSelection || waiting}
+				/>
+				{error && (
+					<div style={{ marginTop: 10, fontSize: 12, color: theme.errorText }}>
+						{error}
+					</div>
+				)}
+			</div>
 		</main>
 	);
 }

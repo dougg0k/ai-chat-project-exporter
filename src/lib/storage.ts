@@ -5,8 +5,9 @@ import {
 	EXPORT_FORMAT_KEY,
 	FLOATING_POSITIONS_KEY,
 	FLOATING_VISIBILITY_KEY,
+	THEME_MODE_KEY,
 } from "./constants";
-import type { ExportFormat } from "./types";
+import type { ExportFormat, ThemeMode } from "./types";
 
 export interface FloatingButtonPosition {
 	x: number;
@@ -17,6 +18,10 @@ type FloatingButtonPositionsByScope = Record<string, FloatingButtonPosition>;
 
 function normalizeFormat(value: unknown): ExportFormat {
 	return value === "html" ? "html" : "markdown";
+}
+
+function normalizeThemeMode(value: unknown): ThemeMode {
+	return value === "dark" ? "dark" : "light";
 }
 
 function normalizePosition(value: unknown): FloatingButtonPosition | null {
@@ -59,6 +64,17 @@ export async function setPreferredExportFormat(
 	value: ExportFormat,
 ): Promise<void> {
 	await browser.storage.local.set({ [EXPORT_FORMAT_KEY]: value });
+}
+
+export async function getThemeMode(): Promise<ThemeMode> {
+	const result = await browser.storage.local.get(THEME_MODE_KEY);
+	return normalizeThemeMode(result[THEME_MODE_KEY]);
+}
+
+export async function setThemeMode(value: ThemeMode): Promise<void> {
+	await browser.storage.local.set({
+		[THEME_MODE_KEY]: normalizeThemeMode(value),
+	});
 }
 
 export async function getFloatingButtonPosition(

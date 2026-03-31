@@ -30,6 +30,11 @@ type SenderResponse = {
 	conversations?: Conversation[];
 };
 
+type ConversationCaptureResult = {
+	conversation: Conversation | null;
+	error?: string;
+};
+
 type TabSignal =
 	| "raw-capture"
 	| "content-ready"
@@ -41,6 +46,13 @@ type Waiter = {
 	timeoutId: ReturnType<typeof setTimeout>;
 };
 
+type ProjectExportDecision = "skip";
+
+type ProjectExportControl = {
+	skipRequested: boolean;
+	pendingResolver: ((decision: ProjectExportDecision) => void) | null;
+};
+
 const conversationsByTab = new Map<number, Conversation | null>();
 const projectsByTab = new Map<number, ProjectListing | null>();
 const pendingChatGptTextdocsByTab = new Map<
@@ -50,6 +62,7 @@ const pendingChatGptTextdocsByTab = new Map<
 const observedChatGptTextdocsByTab = new Map<number, Set<string>>();
 const contentReadyUrlsByTab = new Map<number, string>();
 const waitersByTab = new Map<number, Set<Waiter>>();
+const projectExportControlsByTab = new Map<number, ProjectExportControl>();
 
 export default defineBackground(() => {
 	browser.runtime.onMessage.addListener(
@@ -66,6 +79,11 @@ export default defineBackground(() => {
 
 			if (message.type === "UI_CONTEXT_CHANGED") {
 				notifyTabWaiters(sender.tab?.id, "ui-context-changed");
+				return undefined;
+			}
+
+			if (message.type === "SKIP_PROJECT_EXPORT") {
+				sendResponse({ ok: requestProjectExportSkip(sender.tab?.id) });
 				return undefined;
 			}
 
@@ -270,6 +288,7 @@ async function collectProjectConversations(
 	}
 
 	const conversations: Conversation[] = [];
+	if (senderTabId != null) getProjectExportControl(senderTabId);
 
 	try {
 		for (const chat of message.project.chats) {
@@ -282,19 +301,52 @@ async function collectProjectConversations(
 				message.currentProjectPageUrl,
 				chat.id,
 			)[0];
-			if (!pageUrl) continue;
+			if (!pageUrl) {
+				const failure = "Could not build the project chat URL.";
+				await sendProgress(
+					senderTabId,
+					`Failed: ${capitalize(message.project.provider)} - ${message.project.projectName} - ${chat.title} - ${failure} Click Skip failed chat to continue without this page.`,
+					true,
+				);
+				if (senderTabId == null) {
+					return {
+						ok: false,
+						error: `Failed to load chat "${chat.title}": ${failure}`,
+					};
+				}
+				await waitForProjectExportDecision(senderTabId);
+				continue;
+			}
 			const captured = await captureConversationFromPage(
 				helper.id,
 				pageUrl,
 				chat.id,
 				chat.title,
 			);
-			if (captured) conversations.push(captured);
+			if (captured.conversation) {
+				conversations.push(captured.conversation);
+				continue;
+			}
+			const failure = captured.error || "Unknown chat loading failure.";
+			await sendProgress(
+				senderTabId,
+				`Failed: ${capitalize(message.project.provider)} - ${message.project.projectName} - ${chat.title} - ${failure} Click Skip failed chat to continue without this page.`,
+				true,
+			);
+			if (senderTabId == null) {
+				return {
+					ok: false,
+					error: `Failed to load chat "${chat.title}": ${failure}`,
+				};
+			}
+			await waitForProjectExportDecision(senderTabId);
 		}
 
 		await sendProgress(senderTabId, null);
 		return { ok: true, conversations };
 	} finally {
+		await sendProgress(senderTabId, null);
+		clearProjectExportControl(senderTabId);
 		await closeTabQuietly(helper.id);
 		await refocusSenderTab(senderTabId);
 	}
@@ -305,17 +357,29 @@ async function captureConversationFromPage(
 	pageUrl: string,
 	expectedChatId: string,
 	expectedTitle?: string,
-): Promise<Conversation | null> {
+): Promise<ConversationCaptureResult> {
 	clearTabState(helperTabId);
-	await navigateTabUntilUrlMatches(helperTabId, pageUrl);
-	await waitForContentReady(helperTabId, pageUrl);
-	return captureConversationFromTab(
-		helperTabId,
-		expectedChatId,
-		pageUrl,
-		expectedTitle,
-		true,
-	);
+	try {
+		await navigateTabUntilUrlMatches(helperTabId, pageUrl);
+		await waitForContentReady(helperTabId, pageUrl);
+		const conversation = await captureConversationFromTab(
+			helperTabId,
+			expectedChatId,
+			pageUrl,
+			expectedTitle,
+			true,
+		);
+		if (conversation) return { conversation };
+		return {
+			conversation: null,
+			error: "Timed out while waiting for chat data.",
+		};
+	} catch (error) {
+		return {
+			conversation: null,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
 }
 
 async function captureConversationFromTab(
@@ -455,16 +519,74 @@ async function safeSendMessage<T>(
 	}
 }
 
-async function sendProgress(tabId: number | undefined, status: string | null) {
+async function sendProgress(
+	tabId: number | undefined,
+	status: string | null,
+	canSkip = false,
+) {
 	if (tabId == null) return;
 	try {
 		await browser.tabs.sendMessage(tabId, {
 			type: "PROJECT_EXPORT_PROGRESS",
 			status,
+			canSkip,
 		});
 	} catch {
 		// ignore
 	}
+}
+
+function getProjectExportControl(tabId: number): ProjectExportControl {
+	const existing = projectExportControlsByTab.get(tabId);
+	if (existing) return existing;
+	const next: ProjectExportControl = {
+		skipRequested: false,
+		pendingResolver: null,
+	};
+	projectExportControlsByTab.set(tabId, next);
+	return next;
+}
+
+function clearProjectExportControl(tabId: number | undefined) {
+	if (tabId == null) return;
+	const control = projectExportControlsByTab.get(tabId);
+	if (control?.pendingResolver) {
+		const resolve = control.pendingResolver;
+		control.pendingResolver = null;
+		resolve("skip");
+	}
+	projectExportControlsByTab.delete(tabId);
+}
+
+function requestProjectExportSkip(tabId: number | undefined): boolean {
+	if (tabId == null) return false;
+	const control = projectExportControlsByTab.get(tabId);
+	if (!control) return false;
+	if (control.pendingResolver) {
+		const resolve = control.pendingResolver;
+		control.pendingResolver = null;
+		resolve("skip");
+		return true;
+	}
+	control.skipRequested = true;
+	return true;
+}
+
+async function waitForProjectExportDecision(
+	tabId: number,
+): Promise<ProjectExportDecision> {
+	const control = getProjectExportControl(tabId);
+	if (control.skipRequested) {
+		control.skipRequested = false;
+		return "skip";
+	}
+	return new Promise<ProjectExportDecision>((resolve) => {
+		control.pendingResolver = (decision) => {
+			control.pendingResolver = null;
+			control.skipRequested = false;
+			resolve(decision);
+		};
+	});
 }
 
 async function navigateTabUntilUrlMatches(

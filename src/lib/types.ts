@@ -1,5 +1,6 @@
 export type ProviderName = "chatgpt" | "claude";
 export type ExportFormat = "markdown" | "html";
+export type ThemeMode = "light" | "dark";
 export type PageKind = "chat" | "project" | "unknown" | "unsupported";
 
 export interface GeneratedDocument {
@@ -68,6 +69,7 @@ export interface UiContext {
 	projectName?: string;
 	showFloatingButton: boolean;
 	projectExportStatus?: string | null;
+	projectExportCanSkip?: boolean;
 }
 
 export interface RawCaptureMessage {
@@ -147,6 +149,11 @@ export interface CollectProjectConversationsMessage {
 export interface ProjectExportProgressMessage {
 	type: "PROJECT_EXPORT_PROGRESS";
 	status: string | null;
+	canSkip?: boolean;
+}
+
+export interface SkipProjectExportMessage {
+	type: "SKIP_PROJECT_EXPORT";
 }
 
 export interface ContentReadyMessage {
@@ -174,5 +181,6 @@ export type RuntimeMessage =
 	| CollectProjectListingMessage
 	| CollectProjectConversationsMessage
 	| ProjectExportProgressMessage
+	| SkipProjectExportMessage
 	| ContentReadyMessage
 	| UiContextChangedMessage;

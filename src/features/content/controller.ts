@@ -70,6 +70,7 @@ let initialized = false;
 let showFloatingButton = true;
 let lastPageUrl = "";
 let projectExportStatus: string | null = null;
+let projectExportCanSkip = false;
 let lastClaudeOrgId: string | null = null;
 const uiContextListeners = new Set<(context: UiContext) => void>();
 
@@ -629,8 +630,9 @@ function applyConversationTextdocs(conversation: Conversation): Conversation {
 	return replaceConversationTextdocs(conversation, conversation.id, textdocs);
 }
 
-function setProjectStatus(status: string | null) {
+function setProjectStatus(status: string | null, canSkip = false) {
 	projectExportStatus = status;
+	projectExportCanSkip = Boolean(status) && canSkip;
 	emitUiContextChanged();
 }
 
@@ -700,6 +702,7 @@ function buildContext(waiting = false): UiContext {
 		projectName: activeProject?.projectName,
 		showFloatingButton,
 		projectExportStatus: projectExportStatus ?? loadingStatus,
+		projectExportCanSkip,
 	};
 }
 
@@ -863,7 +866,7 @@ export async function initializeController(): Promise<void> {
 	browser.runtime.onMessage.addListener(
 		(message: ProjectExportProgressMessage) => {
 			if (message.type === "PROJECT_EXPORT_PROGRESS") {
-				setProjectStatus(message.status ?? null);
+				setProjectStatus(message.status ?? null, message.canSkip === true);
 				return undefined;
 			}
 			return undefined;
@@ -912,6 +915,16 @@ export async function getActiveProjectData(
 	_allowNetworkFallback = true,
 ): Promise<ProjectListing | null> {
 	return ensureActiveProjectData();
+}
+
+export async function requestProjectExportSkip(): Promise<void> {
+	const result = (await browser.runtime.sendMessage({
+		type: "SKIP_PROJECT_EXPORT",
+	} as const)) as { ok?: boolean; error?: string };
+	if (result?.ok === false) {
+		throw new Error(result.error || "No project export is waiting for skip.");
+	}
+	setProjectStatus(projectExportStatus, false);
 }
 
 export async function getRenderedChat(

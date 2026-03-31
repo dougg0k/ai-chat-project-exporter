@@ -1,4 +1,5 @@
 import React from "react";
+import { browser } from "wxt/browser";
 import ReactDOM from "react-dom/client";
 import { deriveConversationTurns } from "../../lib/chat-selection";
 import { LogoIcon } from "../../lib/Logo";
@@ -6,10 +7,18 @@ import type { FloatingButtonPosition } from "../../lib/storage";
 import {
 	getFloatingButtonPosition,
 	getPreferredExportFormat,
+	getThemeMode,
 	setFloatingButtonPosition,
 	setPreferredExportFormat,
 } from "../../lib/storage";
-import type { Conversation, ExportFormat, UiContext } from "../../lib/types";
+import { THEME_MODE_KEY } from "../../lib/constants";
+import { getUiTheme } from "../../lib/theme";
+import type {
+	Conversation,
+	ExportFormat,
+	ThemeMode,
+	UiContext,
+} from "../../lib/types";
 import { ActionPanel } from "../shared/action-panel";
 import { SelectExportModal } from "../shared/select-export-modal";
 
@@ -18,8 +27,6 @@ const DEFAULT_BUTTON_SIZE = { width: 114, height: 42 } as const;
 const DRAG_THRESHOLD_PX = 5;
 const PANEL_GAP_PX = 10;
 const PANEL_WIDTH_PX = 332;
-const ACTIVE_ACCENT = "#1f2937";
-const ACTIVE_BORDER_PX = 2;
 
 export function mountFloatingUi(options: {
 	getContext: () => Promise<UiContext>;
@@ -34,6 +41,7 @@ export function mountFloatingUi(options: {
 		selectedMessageIds?: string[],
 	) => Promise<void>;
 	onExportProject: (format: ExportFormat) => Promise<void>;
+	onSkipProjectExport: () => Promise<void>;
 }) {
 	const host = document.createElement("div");
 	host.style.position = "fixed";
@@ -92,12 +100,14 @@ function FloatingApp(props: {
 		selectedMessageIds?: string[],
 	) => Promise<void>;
 	onExportProject: (format: ExportFormat) => Promise<void>;
+	onSkipProjectExport: () => Promise<void>;
 	applyHostPosition: (position: FloatingButtonPosition) => void;
 	positionScope: string;
 }) {
 	const [open, setOpen] = React.useState(false);
 	const [format, setFormat] = React.useState<ExportFormat>("markdown");
 	const [busy, setBusy] = React.useState(false);
+	const [themeMode, setThemeState] = React.useState<ThemeMode>("light");
 	const [selectionConversation, setSelectionConversation] =
 		React.useState<Conversation | null>(null);
 	const [selectionVisible, setSelectionVisible] = React.useState(false);
@@ -122,6 +132,7 @@ function FloatingApp(props: {
 		waiting: false,
 		showFloatingButton: true,
 		projectExportStatus: null,
+		projectExportCanSkip: false,
 	});
 	const boxRef = React.useRef<HTMLDivElement | null>(null);
 	const buttonRef = React.useRef<HTMLButtonElement | null>(null);
@@ -138,6 +149,10 @@ function FloatingApp(props: {
 	const selectionNavigationCacheRef = React.useRef<Map<string, HTMLElement>>(
 		new Map(),
 	);
+	const theme = React.useMemo(
+		() => getUiTheme(themeMode, context.provider),
+		[themeMode, context.provider],
+	);
 	const selectionConversationSignatureRef = React.useRef<string | null>(null);
 
 	const refresh = React.useCallback(async () => {
@@ -147,10 +162,27 @@ function FloatingApp(props: {
 
 	React.useEffect(() => {
 		void refresh();
-		void getPreferredExportFormat()
-			.then(setFormat)
+		void Promise.all([getPreferredExportFormat(), getThemeMode()])
+			.then(([storedFormat, storedTheme]) => {
+				setFormat(storedFormat);
+				setThemeState(storedTheme);
+			})
 			.catch(() => undefined);
 	}, [refresh]);
+
+	React.useEffect(() => {
+		const onChanged = (
+			changes: Record<string, { newValue?: unknown }>,
+			areaName: string,
+		) => {
+			if (areaName !== "local") return;
+			const themeChange = changes[THEME_MODE_KEY];
+			if (!themeChange) return;
+			setThemeState(themeChange.newValue === "dark" ? "dark" : "light");
+		};
+		browser.storage.onChanged.addListener(onChanged);
+		return () => browser.storage.onChanged.removeListener(onChanged);
+	}, []);
 
 	React.useEffect(() => {
 		let cancelled = false;
@@ -381,18 +413,22 @@ function FloatingApp(props: {
 	return (
 		<div
 			ref={boxRef}
-			style={{ position: "relative", fontFamily: "system-ui, sans-serif" }}
+			style={{
+				position: "relative",
+				fontFamily: "system-ui, sans-serif",
+				color: theme.text,
+			}}
 		>
 			{open && (
 				<div
 					style={{
 						position: "absolute",
 						width: PANEL_WIDTH_PX,
-						background: "#fff",
-						border: "1px solid rgba(15,23,42,0.12)",
+						background: theme.panelBackground,
+						border: theme.panelBorder,
 						borderRadius: 14,
 						padding: 12,
-						boxShadow: "0 12px 30px rgba(0,0,0,0.18)",
+						boxShadow: "none",
 						...(panelPlacement.vertical === "below"
 							? { top: `calc(100% + ${PANEL_GAP_PX}px)` }
 							: { bottom: `calc(100% + ${PANEL_GAP_PX}px)` }),
@@ -404,12 +440,26 @@ function FloatingApp(props: {
 					<ActionPanel
 						pageKind={context.pageKind}
 						format={format}
+						themeMode={themeMode}
+						theme={theme}
 						onFormatChange={(next) => {
 							setFormat(next);
 							void setPreferredExportFormat(next).catch(() => undefined);
 						}}
 						showFloatingButton={context.showFloatingButton}
 						statusText={context.projectExportStatus ?? undefined}
+						canSkipProjectExport={context.projectExportCanSkip === true}
+						onSkipProjectExport={
+							context.projectExportCanSkip
+								? () => {
+										setBusy(true);
+										void props.onSkipProjectExport().finally(() => {
+											setBusy(false);
+											void refresh();
+										});
+									}
+								: undefined
+						}
 						disabled={busy || context.waiting}
 						onExport={() => {
 							if (context.pageKind === "project") {
@@ -484,13 +534,17 @@ function FloatingApp(props: {
 						padding: "10px 14px",
 						borderRadius: 999,
 						border: open
-							? `${ACTIVE_BORDER_PX}px solid ${ACTIVE_ACCENT}`
-							: "1px solid rgba(15,23,42,0.14)",
+							? theme.floatingButtonOpenBorder
+							: theme.floatingButtonBorder,
 						boxSizing: "border-box",
-						background: open ? ACTIVE_ACCENT : "#fff",
-						color: open ? "#fff" : ACTIVE_ACCENT,
+						background: open
+							? theme.floatingButtonOpenBackground
+							: theme.floatingButtonBackground,
+						color: open
+							? theme.floatingButtonOpenText
+							: theme.floatingButtonText,
 						cursor: "grab",
-						boxShadow: "0 8px 22px rgba(0,0,0,0.22)",
+						boxShadow: "none",
 						userSelect: "none",
 						WebkitUserSelect: "none",
 						touchAction: "none",
@@ -500,7 +554,12 @@ function FloatingApp(props: {
 				>
 					<LogoIcon size={18} />
 					<span
-						style={{ fontWeight: 600, color: open ? "#fff" : ACTIVE_ACCENT }}
+						style={{
+							fontWeight: 600,
+							color: open
+								? theme.floatingButtonOpenText
+								: theme.floatingButtonText,
+						}}
 					>
 						Export
 					</span>

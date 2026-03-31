@@ -11,6 +11,7 @@ import {
 	initializeController,
 	setFloatingButtonVisible,
 	shouldRenderFloatingButton,
+	requestProjectExportSkip,
 } from "../features/content/controller";
 import { mountFloatingUi } from "../features/content/floating-ui";
 import { subscribeUiContext } from "../features/content/controller";
@@ -39,6 +40,7 @@ export default defineContentScript({
 					onCopyChat: async (format, selectedMessageIds) =>
 						exportChat(format, "clipboard", selectedMessageIds),
 					onExportProject: exportProject,
+					onSkipProjectExport: requestProjectExportSkip,
 				});
 			}
 		};
@@ -80,7 +82,8 @@ export default defineContentScript({
 					message.type !== "OPEN_SELECT_EXPORT_MODAL" &&
 					message.type !== "EXPORT_CHAT" &&
 					message.type !== "EXPORT_PROJECT" &&
-					message.type !== "PROJECT_EXPORT_PROGRESS"
+					message.type !== "PROJECT_EXPORT_PROGRESS" &&
+					message.type !== "SKIP_PROJECT_EXPORT"
 				) {
 					return undefined;
 				}
@@ -88,6 +91,18 @@ export default defineContentScript({
 				if (message.type === "PROJECT_EXPORT_PROGRESS") {
 					sendResponse({ ok: true });
 					return undefined;
+				}
+
+				if (message.type === "SKIP_PROJECT_EXPORT") {
+					void requestProjectExportSkip()
+						.then(() => sendResponse({ ok: true }))
+						.catch((error) =>
+							sendResponse({
+								ok: false,
+								error: error instanceof Error ? error.message : String(error),
+							}),
+						);
+					return true;
 				}
 
 				void (async () => {
