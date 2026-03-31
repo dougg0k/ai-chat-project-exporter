@@ -29,7 +29,10 @@ import {
 	inferProvider,
 } from "../../lib/page-context";
 import { parseConversation, parseProjectListing } from "../../lib/parser";
-import { parseChatGptTextdocs } from "../../lib/parser-chatgpt";
+import {
+	mergeChatGptTextdocs,
+	parseChatGptTextdocs,
+} from "../../lib/parser-chatgpt";
 import {
 	buildChatGptProjectListingUrl,
 	mergeProjectListings,
@@ -604,6 +607,7 @@ function handleRawCapture(message: RawCaptureMessage) {
 			);
 		}
 		markObservedConversationTextdocs(textdocs.conversationId);
+		flushChatGptConversationReadyWaiters();
 	}
 	const project = parseProjectListing(message.url, message.text);
 	if (project) {
@@ -620,7 +624,15 @@ function stashConversationTextdocs(
 	conversationId: string,
 	textdocs: import("../../lib/types").ChatGptTextdoc[],
 ) {
-	chatGptTextdocsByConversation.set(conversationId, [...textdocs]);
+	const merged = mergeChatGptTextdocs(
+		chatGptTextdocsByConversation.get(conversationId),
+		textdocs,
+	);
+	if (merged && merged.length > 0) {
+		chatGptTextdocsByConversation.set(conversationId, [...merged]);
+		return;
+	}
+	chatGptTextdocsByConversation.delete(conversationId);
 }
 
 function applyConversationTextdocs(conversation: Conversation): Conversation {

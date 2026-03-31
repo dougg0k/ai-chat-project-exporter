@@ -1,4 +1,5 @@
 import { extractCurrentChatId } from "./page-context";
+import { mergeChatGptTextdocs } from "./parser-chatgpt";
 import type { ChatGptTextdoc, Conversation } from "./types";
 
 export function replaceConversationTextdocs(
@@ -9,9 +10,11 @@ export function replaceConversationTextdocs(
 	if (conversation.provider !== "chatgpt") return conversation;
 	if (!conversationMatchesTextdocsConversation(conversation, conversationId))
 		return conversation;
+	const merged = mergeChatGptTextdocs(conversation.chatGptTextdocs, textdocs);
+	if (!merged || merged.length === 0) return conversation;
 	return {
 		...conversation,
-		chatGptTextdocs: [...textdocs],
+		chatGptTextdocs: [...merged],
 	};
 }
 

@@ -156,6 +156,10 @@ export interface SkipProjectExportMessage {
 	type: "SKIP_PROJECT_EXPORT";
 }
 
+export interface RequestProjectExportSkipMessage {
+	type: "REQUEST_PROJECT_EXPORT_SKIP";
+}
+
 export interface ContentReadyMessage {
 	type: "CONTENT_READY";
 	url: string;
@@ -182,5 +186,6 @@ export type RuntimeMessage =
 	| CollectProjectConversationsMessage
 	| ProjectExportProgressMessage
 	| SkipProjectExportMessage
+	| RequestProjectExportSkipMessage
 	| ContentReadyMessage
 	| UiContextChangedMessage;

@@ -3,7 +3,10 @@ import { browser } from "wxt/browser";
 import { buildProjectChatPageUrls } from "../lib/page-context";
 import { parseConversation, parseProjectListing } from "../lib/parser";
 import { replaceConversationTextdocs } from "../lib/chatgpt-textdocs";
-import { parseChatGptTextdocs } from "../lib/parser-chatgpt";
+import {
+	mergeChatGptTextdocs,
+	parseChatGptTextdocs,
+} from "../lib/parser-chatgpt";
 import {
 	mergeProjectListings,
 	projectListingSignature,
@@ -139,7 +142,20 @@ function stashPendingConversationTextdocs(
 	const byConversation =
 		pendingChatGptTextdocsByTab.get(tabId) ??
 		new Map<string, import("../lib/types").ChatGptTextdoc[]>();
-	byConversation.set(conversationId, [...textdocs]);
+	const merged = mergeChatGptTextdocs(
+		byConversation.get(conversationId),
+		textdocs,
+	);
+	if (merged && merged.length > 0) {
+		byConversation.set(conversationId, [...merged]);
+		pendingChatGptTextdocsByTab.set(tabId, byConversation);
+		return;
+	}
+	byConversation.delete(conversationId);
+	if (byConversation.size === 0) {
+		pendingChatGptTextdocsByTab.delete(tabId);
+		return;
+	}
 	pendingChatGptTextdocsByTab.set(tabId, byConversation);
 }
 

@@ -320,7 +320,7 @@ export function PopupApp() {
 		setError("");
 		setCanSkipProjectExport(false);
 		void browser.tabs
-			.sendMessage(activeTabId, { type: "SKIP_PROJECT_EXPORT" })
+			.sendMessage(activeTabId, { type: "REQUEST_PROJECT_EXPORT_SKIP" })
 			.then((result) => {
 				if (result?.ok === false) {
 					setError(result.error || "Failed to skip chat.");

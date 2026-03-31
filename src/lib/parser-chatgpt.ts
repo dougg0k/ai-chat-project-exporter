@@ -9,14 +9,44 @@ import type {
 } from "./types";
 
 function orderedMappingNodes(mapping: Record<string, any>): any[] {
-	const roots = Object.values<any>(mapping).filter((node) => !node?.parent);
+	const entries = Object.values<any>(mapping).filter(Boolean);
+	if (entries.length === 0) return [];
+
+	const roots = entries.filter((node) => !node?.parent);
+	const startNodes = roots.length > 0 ? roots : entries;
 	const out: any[] = [];
-	const visit = (node: any) => {
-		if (!node) return;
+	const seen = new Set<any>();
+	const queued = new Set<any>();
+	const stack = [...startNodes].reverse();
+
+	for (const node of stack) queued.add(node);
+
+	while (stack.length > 0) {
+		const node = stack.pop();
+		if (!node) continue;
+		queued.delete(node);
+		if (seen.has(node)) continue;
+		seen.add(node);
 		out.push(node);
-		for (const childId of node.children ?? []) visit(mapping[childId]);
-	};
-	for (const root of roots) visit(root);
+		const children = Array.isArray(node.children) ? node.children : [];
+		for (let index = children.length - 1; index >= 0; index -= 1) {
+			const childId = children[index];
+			if (typeof childId !== "string") continue;
+			const child = mapping[childId];
+			if (!child || seen.has(child) || queued.has(child)) continue;
+			stack.push(child);
+			queued.add(child);
+		}
+	}
+
+	if (seen.size < entries.length) {
+		for (const node of entries) {
+			if (seen.has(node)) continue;
+			seen.add(node);
+			out.push(node);
+		}
+	}
+
 	return out;
 }
 

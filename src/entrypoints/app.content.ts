@@ -83,7 +83,7 @@ export default defineContentScript({
 					message.type !== "EXPORT_CHAT" &&
 					message.type !== "EXPORT_PROJECT" &&
 					message.type !== "PROJECT_EXPORT_PROGRESS" &&
-					message.type !== "SKIP_PROJECT_EXPORT"
+					message.type !== "REQUEST_PROJECT_EXPORT_SKIP"
 				) {
 					return undefined;
 				}
@@ -93,7 +93,7 @@ export default defineContentScript({
 					return undefined;
 				}
 
-				if (message.type === "SKIP_PROJECT_EXPORT") {
+				if (message.type === "REQUEST_PROJECT_EXPORT_SKIP") {
 					void requestProjectExportSkip()
 						.then(() => sendResponse({ ok: true }))
 						.catch((error) =>
