@@ -56,6 +56,10 @@ export function mountFloatingUi(options: {
 
 	let api: { openSelectionModal: (format?: ExportFormat) => void } | null =
 		null;
+	let pendingOpenSelectionRequest: {
+		hasRequest: true;
+		format?: ExportFormat;
+	} | null = null;
 	const root = ReactDOM.createRoot(mount);
 	root.render(
 		<FloatingApp
@@ -69,6 +73,11 @@ export function mountFloatingUi(options: {
 			}}
 			registerApi={(next) => {
 				api = next;
+				if (pendingOpenSelectionRequest) {
+					const request = pendingOpenSelectionRequest;
+					pendingOpenSelectionRequest = null;
+					next.openSelectionModal(request.format);
+				}
 			}}
 		/>,
 	);
@@ -79,7 +88,11 @@ export function mountFloatingUi(options: {
 			host.remove();
 		},
 		openSelectionModal: (format?: ExportFormat) => {
-			api?.openSelectionModal(format);
+			if (api) {
+				api.openSelectionModal(format);
+				return;
+			}
+			pendingOpenSelectionRequest = { hasRequest: true, format };
 		},
 	};
 }

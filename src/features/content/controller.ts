@@ -923,6 +923,10 @@ export async function getActiveConversationData(
 	return ensureActiveConversationForPage(allowNetworkFallback);
 }
 
+export async function getActiveConversationForSelection(): Promise<Conversation | null> {
+	return waitForSingleChatConversationForExport();
+}
+
 export async function getActiveProjectData(
 	_allowNetworkFallback = true,
 ): Promise<ProjectListing | null> {

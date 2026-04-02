@@ -5,6 +5,7 @@ import {
 	exportChat,
 	exportProject,
 	getActiveConversationData,
+	getActiveConversationForSelection,
 	getActiveProjectData,
 	getRenderedChat,
 	getUiContext,
@@ -34,7 +35,7 @@ export default defineContentScript({
 				floatingUi = mountFloatingUi({
 					getContext: getUiContext,
 					subscribeContext: subscribeUiContext,
-					getActiveConversation: () => getActiveConversationData(false),
+					getActiveConversation: () => getActiveConversationForSelection(),
 					onExportChat: async (format, selectedMessageIds) =>
 						exportChat(format, "file", selectedMessageIds),
 					onCopyChat: async (format, selectedMessageIds) =>
