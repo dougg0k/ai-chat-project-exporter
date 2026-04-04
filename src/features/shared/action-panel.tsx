@@ -14,8 +14,10 @@ export interface ActionPanelProps {
 	onClipboard?: () => void;
 	onToggleFloating?: (value: boolean) => void;
 	onToggleTheme?: (value: ThemeMode) => void;
+	onToggleIncludeDocumentsCanvas?: (value: boolean) => void;
 	onSkipProjectExport?: () => void;
 	showFloatingButton?: boolean;
+	includeDocumentsCanvas?: boolean;
 	disabled?: boolean;
 	compact?: boolean;
 	statusText?: string;
@@ -122,7 +124,9 @@ export function ActionPanel(props: ActionPanelProps) {
 				</div>
 			)}
 
-			{(props.onToggleFloating || props.onToggleTheme) && (
+			{(props.onToggleFloating ||
+				props.onToggleTheme ||
+				props.onToggleIncludeDocumentsCanvas) && (
 				<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
 					{props.onToggleFloating && (
 						<ToggleRow theme={props.theme}>
@@ -146,6 +150,19 @@ export function ActionPanel(props: ActionPanelProps) {
 								style={{ accentColor: props.theme.accent }}
 							/>
 							<span>Dark theme</span>
+						</ToggleRow>
+					)}
+					{props.onToggleIncludeDocumentsCanvas && (
+						<ToggleRow theme={props.theme}>
+							<input
+								type="checkbox"
+								checked={props.includeDocumentsCanvas !== false}
+								onChange={(e) =>
+									props.onToggleIncludeDocumentsCanvas?.(e.target.checked)
+								}
+								style={{ accentColor: props.theme.accent }}
+							/>
+							<span>Include Documents / Canvas</span>
 						</ToggleRow>
 					)}
 				</div>

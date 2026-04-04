@@ -36,10 +36,28 @@ export default defineContentScript({
 					getContext: getUiContext,
 					subscribeContext: subscribeUiContext,
 					getActiveConversation: () => getActiveConversationForSelection(),
-					onExportChat: async (format, selectedMessageIds) =>
-						exportChat(format, "file", selectedMessageIds),
-					onCopyChat: async (format, selectedMessageIds) =>
-						exportChat(format, "clipboard", selectedMessageIds),
+					onExportChat: async (
+						format,
+						includeDocumentsCanvas,
+						selectedMessageIds,
+					) =>
+						exportChat(
+							format,
+							"file",
+							selectedMessageIds,
+							includeDocumentsCanvas,
+						),
+					onCopyChat: async (
+						format,
+						includeDocumentsCanvas,
+						selectedMessageIds,
+					) =>
+						exportChat(
+							format,
+							"clipboard",
+							selectedMessageIds,
+							includeDocumentsCanvas,
+						),
 					onExportProject: exportProject,
 					onSkipProjectExport: requestProjectExportSkip,
 				});
@@ -123,6 +141,7 @@ export default defineContentScript({
 								text: await getRenderedChat(
 									message.format,
 									message.selectedMessageIds,
+									message.includeDocumentsCanvas,
 								),
 							});
 							return;
@@ -157,12 +176,16 @@ export default defineContentScript({
 								message.format,
 								message.target,
 								message.selectedMessageIds,
+								message.includeDocumentsCanvas,
 							);
 							sendResponse({ ok: true });
 							return;
 						}
 						if (message.type === "EXPORT_PROJECT") {
-							await exportProject(message.format);
+							await exportProject(
+								message.format,
+								message.includeDocumentsCanvas,
+							);
 							sendResponse({ ok: true });
 							return;
 						}

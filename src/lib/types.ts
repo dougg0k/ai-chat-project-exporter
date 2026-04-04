@@ -3,6 +3,10 @@ export type ExportFormat = "markdown" | "html";
 export type ThemeMode = "light" | "dark";
 export type PageKind = "chat" | "project" | "unknown" | "unsupported";
 
+export interface ExportOptions {
+	includeDocumentsCanvas?: boolean;
+}
+
 export interface GeneratedDocument {
 	id: string;
 	title: string;
@@ -107,17 +111,20 @@ export interface ExportChatMessage {
 	format: ExportFormat;
 	target: "file" | "clipboard";
 	selectedMessageIds?: string[];
+	includeDocumentsCanvas?: boolean;
 }
 
 export interface ExportProjectMessage {
 	type: "EXPORT_PROJECT";
 	format: ExportFormat;
+	includeDocumentsCanvas?: boolean;
 }
 
 export interface GetRenderedChatMessage {
 	type: "GET_RENDERED_CHAT";
 	format: ExportFormat;
 	selectedMessageIds?: string[];
+	includeDocumentsCanvas?: boolean;
 }
 
 export interface GetActiveConversationDataMessage {

@@ -5,6 +5,7 @@ import {
 	EXPORT_FORMAT_KEY,
 	FLOATING_POSITIONS_KEY,
 	FLOATING_VISIBILITY_KEY,
+	INCLUDE_DOCUMENTS_CANVAS_KEY,
 	THEME_MODE_KEY,
 } from "./constants";
 import type { ExportFormat, ThemeMode } from "./types";
@@ -64,6 +65,15 @@ export async function setPreferredExportFormat(
 	value: ExportFormat,
 ): Promise<void> {
 	await browser.storage.local.set({ [EXPORT_FORMAT_KEY]: value });
+}
+
+export async function getIncludeDocumentsCanvas(): Promise<boolean> {
+	const result = await browser.storage.local.get(INCLUDE_DOCUMENTS_CANVAS_KEY);
+	return result[INCLUDE_DOCUMENTS_CANVAS_KEY] !== false;
+}
+
+export async function setIncludeDocumentsCanvas(value: boolean): Promise<void> {
+	await browser.storage.local.set({ [INCLUDE_DOCUMENTS_CANVAS_KEY]: value });
 }
 
 export async function getThemeMode(): Promise<ThemeMode> {

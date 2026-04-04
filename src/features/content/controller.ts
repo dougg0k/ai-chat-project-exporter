@@ -946,6 +946,7 @@ export async function requestProjectExportSkip(): Promise<void> {
 export async function getRenderedChat(
 	format: ExportFormat,
 	selectedMessageIds?: string[],
+	includeDocumentsCanvas = true,
 ): Promise<string> {
 	const conversation = await waitForSingleChatConversationForExport();
 	if (!conversation) {
@@ -955,13 +956,16 @@ export async function getRenderedChat(
 		conversation,
 		selectedMessageIds,
 	);
-	return buildConversationBundle(filteredConversation, format).mainContent;
+	return buildConversationBundle(filteredConversation, format, new Date(), {
+		includeDocumentsCanvas,
+	}).mainContent;
 }
 
 export async function exportChat(
 	format: ExportFormat,
 	target: "file" | "clipboard",
 	selectedMessageIds?: string[],
+	includeDocumentsCanvas = true,
 ): Promise<void> {
 	const conversation = await waitForSingleChatConversationForExport();
 	if (!conversation) {
@@ -978,6 +982,7 @@ export async function exportChat(
 		new Date(),
 		{
 			nestAssetsUnderChatFolder: false,
+			includeDocumentsCanvas,
 		},
 	);
 	if (target === "clipboard") {
@@ -1029,7 +1034,10 @@ function normalizeSelectedConversation(
 	return filteredConversation;
 }
 
-export async function exportProject(format: ExportFormat): Promise<void> {
+export async function exportProject(
+	format: ExportFormat,
+	includeDocumentsCanvas = true,
+): Promise<void> {
 	let activeProject = await ensureActiveProjectData();
 
 	if (
@@ -1100,7 +1108,9 @@ export async function exportProject(format: ExportFormat): Promise<void> {
 		});
 
 		for (const conversation of sorted) {
-			const prepared = buildConversationBundle(conversation, format);
+			const prepared = buildConversationBundle(conversation, format, now, {
+				includeDocumentsCanvas,
+			});
 			zip.file(`${folderName}/${prepared.mainFilename}`, prepared.mainContent);
 			for (const canvas of prepared.canvases) {
 				if (format === "html") {

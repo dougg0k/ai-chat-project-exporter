@@ -33,10 +33,14 @@ export function prepareConversationExport(
 	conversation: Conversation,
 	format: ExportFormat,
 	now = new Date(),
-	options?: { nestAssetsUnderChatFolder?: boolean },
+	options?: {
+		nestAssetsUnderChatFolder?: boolean;
+		includeDocumentsCanvas?: boolean;
+	},
 ): PreparedConversationExport {
 	const chatFolder = safeFilenamePart(conversation.title) || "untitled-chat";
 	const nestAssetsUnderChatFolder = options?.nestAssetsUnderChatFolder ?? true;
+	const includeDocumentsCanvas = options?.includeDocumentsCanvas ?? true;
 	const ext = format === "html" ? "html" : "md";
 	const mainFilename = buildConversationFilename(
 		conversation.title,
@@ -46,13 +50,15 @@ export function prepareConversationExport(
 	);
 	const usedPaths = new Set<string>();
 	const canvases: CanvasAsset[] = [];
-	const chatGptCanvasAssets = materializeChatGptTextdocs(
-		conversation,
-		format,
-		chatFolder,
-		usedPaths,
-		nestAssetsUnderChatFolder,
-	);
+	const chatGptCanvasAssets = includeDocumentsCanvas
+		? materializeChatGptTextdocs(
+				conversation,
+				format,
+				chatFolder,
+				usedPaths,
+				nestAssetsUnderChatFolder,
+			)
+		: [];
 	const chatGptCanvasResolver =
 		conversation.provider === "chatgpt"
 			? buildChatGptCanvasResolver(chatGptCanvasAssets)
@@ -68,19 +74,21 @@ export function prepareConversationExport(
 			canvases,
 			nestAssetsUnderChatFolder,
 			chatGptCanvasResolver,
+			includeDocumentsCanvas,
 		),
 	);
-	const generatedDocumentAssets = materializeGeneratedDocuments(
-		conversation.generatedDocuments ?? [],
-		format,
-		chatFolder,
-		usedPaths,
-		nestAssetsUnderChatFolder,
-	);
-	const appendixMarkdown = buildGeneratedDocumentsAppendix(
-		generatedDocumentAssets,
-		format,
-	);
+	const generatedDocumentAssets = includeDocumentsCanvas
+		? materializeGeneratedDocuments(
+				conversation.generatedDocuments ?? [],
+				format,
+				chatFolder,
+				usedPaths,
+				nestAssetsUnderChatFolder,
+			)
+		: [];
+	const appendixMarkdown = includeDocumentsCanvas
+		? buildGeneratedDocumentsAppendix(generatedDocumentAssets, format)
+		: "";
 
 	return {
 		conversation: {
@@ -103,11 +111,24 @@ function transformMessage(
 	usedPaths: Set<string>,
 	canvases: CanvasAsset[],
 	nestAssetsUnderChatFolder: boolean,
-	chatGptCanvasResolver?: Map<string, CanvasAsset>,
+	chatGptCanvasResolver: Map<string, CanvasAsset> | undefined,
+	includeDocumentsCanvas: boolean,
 ): Message {
 	if (message.role !== "assistant") return message;
 	const parsed = findCanvasPayload(message.markdown);
 	if (!parsed) return message;
+
+	if (!includeDocumentsCanvas) {
+		const prefixOnly = normalizeVisiblePrefix(
+			parsed.prefix,
+			inferTitleFromPrefix(parsed.prefix) || "Canvas",
+		);
+		const suffix = parsed.suffix.trim();
+		return {
+			...message,
+			markdown: [prefixOnly, suffix].filter(Boolean).join("\n\n").trim(),
+		};
+	}
 
 	let artifact: CanvasAsset | null = null;
 	if (chatGptCanvasResolver) {
@@ -614,7 +635,10 @@ export function buildConversationBundle(
 	conversation: Conversation,
 	format: ExportFormat,
 	now = new Date(),
-	options?: { nestAssetsUnderChatFolder?: boolean },
+	options?: {
+		nestAssetsUnderChatFolder?: boolean;
+		includeDocumentsCanvas?: boolean;
+	},
 ): {
 	mainFilename: string;
 	mainContent: string;

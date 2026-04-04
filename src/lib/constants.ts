@@ -3,6 +3,7 @@ export const FLOATING_VISIBILITY_KEY = "showFloatingExportButton";
 export const FLOATING_POSITIONS_KEY = "floatingExportButtonPositions";
 export const EXPORT_FORMAT_KEY = "preferredExportFormat";
 export const DEFAULT_EXPORT_FORMAT = "markdown";
+export const INCLUDE_DOCUMENTS_CANVAS_KEY = "includeDocumentsCanvas";
 export const THEME_MODE_KEY = "themeMode";
 export const CLAUDE_ORG_ID_KEY = "lastClaudeOrgId";
 export const PROVIDERS_URI_PATTERNS = [

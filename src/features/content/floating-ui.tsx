@@ -6,12 +6,17 @@ import { LogoIcon } from "../../lib/Logo";
 import type { FloatingButtonPosition } from "../../lib/storage";
 import {
 	getFloatingButtonPosition,
+	getIncludeDocumentsCanvas,
 	getPreferredExportFormat,
 	getThemeMode,
 	setFloatingButtonPosition,
+	setIncludeDocumentsCanvas,
 	setPreferredExportFormat,
 } from "../../lib/storage";
-import { THEME_MODE_KEY } from "../../lib/constants";
+import {
+	INCLUDE_DOCUMENTS_CANVAS_KEY,
+	THEME_MODE_KEY,
+} from "../../lib/constants";
 import { getUiTheme } from "../../lib/theme";
 import type {
 	Conversation,
@@ -34,13 +39,18 @@ export function mountFloatingUi(options: {
 	getActiveConversation: () => Promise<Conversation | null>;
 	onExportChat: (
 		format: ExportFormat,
+		includeDocumentsCanvas: boolean,
 		selectedMessageIds?: string[],
 	) => Promise<void>;
 	onCopyChat: (
 		format: ExportFormat,
+		includeDocumentsCanvas: boolean,
 		selectedMessageIds?: string[],
 	) => Promise<void>;
-	onExportProject: (format: ExportFormat) => Promise<void>;
+	onExportProject: (
+		format: ExportFormat,
+		includeDocumentsCanvas: boolean,
+	) => Promise<void>;
 	onSkipProjectExport: () => Promise<void>;
 }) {
 	const host = document.createElement("div");
@@ -106,13 +116,18 @@ function FloatingApp(props: {
 	getActiveConversation: () => Promise<Conversation | null>;
 	onExportChat: (
 		format: ExportFormat,
+		includeDocumentsCanvas: boolean,
 		selectedMessageIds?: string[],
 	) => Promise<void>;
 	onCopyChat: (
 		format: ExportFormat,
+		includeDocumentsCanvas: boolean,
 		selectedMessageIds?: string[],
 	) => Promise<void>;
-	onExportProject: (format: ExportFormat) => Promise<void>;
+	onExportProject: (
+		format: ExportFormat,
+		includeDocumentsCanvas: boolean,
+	) => Promise<void>;
 	onSkipProjectExport: () => Promise<void>;
 	applyHostPosition: (position: FloatingButtonPosition) => void;
 	positionScope: string;
@@ -121,6 +136,8 @@ function FloatingApp(props: {
 	const [format, setFormat] = React.useState<ExportFormat>("markdown");
 	const [busy, setBusy] = React.useState(false);
 	const [themeMode, setThemeState] = React.useState<ThemeMode>("light");
+	const [includeDocumentsCanvas, setIncludeDocumentsCanvasState] =
+		React.useState(true);
 	const [selectionConversation, setSelectionConversation] =
 		React.useState<Conversation | null>(null);
 	const [selectionVisible, setSelectionVisible] = React.useState(false);
@@ -175,10 +192,15 @@ function FloatingApp(props: {
 
 	React.useEffect(() => {
 		void refresh();
-		void Promise.all([getPreferredExportFormat(), getThemeMode()])
-			.then(([storedFormat, storedTheme]) => {
+		void Promise.all([
+			getPreferredExportFormat(),
+			getThemeMode(),
+			getIncludeDocumentsCanvas(),
+		])
+			.then(([storedFormat, storedTheme, storedIncludeDocumentsCanvas]) => {
 				setFormat(storedFormat);
 				setThemeState(storedTheme);
+				setIncludeDocumentsCanvasState(storedIncludeDocumentsCanvas);
 			})
 			.catch(() => undefined);
 	}, [refresh]);
@@ -190,8 +212,15 @@ function FloatingApp(props: {
 		) => {
 			if (areaName !== "local") return;
 			const themeChange = changes[THEME_MODE_KEY];
-			if (!themeChange) return;
-			setThemeState(themeChange.newValue === "dark" ? "dark" : "light");
+			if (themeChange) {
+				setThemeState(themeChange.newValue === "dark" ? "dark" : "light");
+			}
+			const includeDocumentsCanvasChange =
+				changes[INCLUDE_DOCUMENTS_CANVAS_KEY];
+			if (!includeDocumentsCanvasChange) return;
+			setIncludeDocumentsCanvasState(
+				includeDocumentsCanvasChange.newValue !== false,
+			);
 		};
 		browser.storage.onChanged.addListener(onChanged);
 		return () => browser.storage.onChanged.removeListener(onChanged);
@@ -349,13 +378,20 @@ function FloatingApp(props: {
 
 		setBusy(true);
 		void props
-			.onExportChat(format, selectedMessageIds)
+			.onExportChat(format, includeDocumentsCanvas, selectedMessageIds)
 			.then(() => {
 				setSelectionVisible(false);
 				setOpen(false);
 			})
 			.finally(() => setBusy(false));
-	}, [format, props, selectedTurnIds, selectionConversation, selectionTurns]);
+	}, [
+		format,
+		includeDocumentsCanvas,
+		props,
+		selectedTurnIds,
+		selectionConversation,
+		selectionTurns,
+	]);
 
 	const handlePointerDown = React.useCallback(
 		(event: React.PointerEvent<HTMLButtonElement>) => {
@@ -459,7 +495,12 @@ function FloatingApp(props: {
 							setFormat(next);
 							void setPreferredExportFormat(next).catch(() => undefined);
 						}}
+						onToggleIncludeDocumentsCanvas={(next) => {
+							setIncludeDocumentsCanvasState(next);
+							void setIncludeDocumentsCanvas(next).catch(() => undefined);
+						}}
 						showFloatingButton={context.showFloatingButton}
+						includeDocumentsCanvas={includeDocumentsCanvas}
 						statusText={context.projectExportStatus ?? undefined}
 						canSkipProjectExport={context.projectExportCanSkip === true}
 						onSkipProjectExport={
@@ -477,17 +518,21 @@ function FloatingApp(props: {
 						onExport={() => {
 							if (context.pageKind === "project") {
 								setBusy(true);
-								void props.onExportProject(format).finally(() => {
-									setBusy(false);
-									void refresh();
-								});
+								void props
+									.onExportProject(format, includeDocumentsCanvas)
+									.finally(() => {
+										setBusy(false);
+										void refresh();
+									});
 								return;
 							}
 							setBusy(true);
-							void props.onExportChat(format).finally(() => {
-								setBusy(false);
-								setOpen(false);
-							});
+							void props
+								.onExportChat(format, includeDocumentsCanvas)
+								.finally(() => {
+									setBusy(false);
+									setOpen(false);
+								});
 						}}
 						onSelectContentExport={
 							context.pageKind === "chat" ? openSelectionModal : undefined
@@ -496,10 +541,12 @@ function FloatingApp(props: {
 							context.pageKind === "chat"
 								? () => {
 										setBusy(true);
-										void props.onCopyChat(format).finally(() => {
-											setBusy(false);
-											setOpen(false);
-										});
+										void props
+											.onCopyChat(format, includeDocumentsCanvas)
+											.finally(() => {
+												setBusy(false);
+												setOpen(false);
+											});
 									}
 								: undefined
 						}

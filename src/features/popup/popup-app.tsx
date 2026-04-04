@@ -1,12 +1,18 @@
 import React from "react";
 import { browser } from "wxt/browser";
 import { ActionPanel } from "../shared/action-panel";
-import { DEFAULT_EXPORT_FORMAT, THEME_MODE_KEY } from "../../lib/constants";
+import {
+	DEFAULT_EXPORT_FORMAT,
+	INCLUDE_DOCUMENTS_CANVAS_KEY,
+	THEME_MODE_KEY,
+} from "../../lib/constants";
 import { inferPageKind, inferProvider } from "../../lib/page-context";
 import {
+	getIncludeDocumentsCanvas,
 	getPreferredExportFormat,
 	getShowFloatingButton,
 	getThemeMode,
+	setIncludeDocumentsCanvas,
 	setPreferredExportFormat,
 	setShowFloatingButton,
 	setThemeMode,
@@ -22,6 +28,7 @@ import type {
 
 const FORMAT_KEY = "preferredExportFormat";
 const FLOATING_KEY = "showFloatingExportButton";
+const INCLUDE_DOCUMENTS_CANVAS_LOCAL_KEY = "includeDocumentsCanvas";
 
 function initialFormat(): ExportFormat {
 	if (typeof localStorage === "undefined") return DEFAULT_EXPORT_FORMAT;
@@ -38,12 +45,19 @@ function initialTheme(): ThemeMode {
 	return localStorage.getItem(THEME_MODE_KEY) === "dark" ? "dark" : "light";
 }
 
+function initialIncludeDocumentsCanvas(): boolean {
+	if (typeof localStorage === "undefined") return true;
+	return localStorage.getItem(INCLUDE_DOCUMENTS_CANVAS_LOCAL_KEY) !== "false";
+}
+
 export function PopupApp() {
 	const [format, setFormatState] = React.useState<ExportFormat>(initialFormat);
 	const [pageKind, setPageKind] = React.useState<PageKind>("unknown");
 	const [showFloatingButton, setShowFloatingState] =
 		React.useState<boolean>(initialFloating);
 	const [themeMode, setThemeState] = React.useState<ThemeMode>(initialTheme);
+	const [includeDocumentsCanvas, setIncludeDocumentsCanvasState] =
+		React.useState<boolean>(initialIncludeDocumentsCanvas);
 	const [provider, setProvider] = React.useState<ProviderName | null>(null);
 	const [activeTabId, setActiveTabId] = React.useState<number | null>(null);
 	const [error, setError] = React.useState<string>("");
@@ -96,18 +110,29 @@ export function PopupApp() {
 
 		void (async () => {
 			try {
-				const [storedFormat, storedFloating, storedTheme] = await Promise.all([
+				const [
+					storedFormat,
+					storedFloating,
+					storedTheme,
+					storedIncludeDocumentsCanvas,
+				] = await Promise.all([
 					getPreferredExportFormat(),
 					getShowFloatingButton(),
 					getThemeMode(),
+					getIncludeDocumentsCanvas(),
 				]);
 				setFormatState(storedFormat);
 				setShowFloatingState(storedFloating);
 				setThemeState(storedTheme);
+				setIncludeDocumentsCanvasState(storedIncludeDocumentsCanvas);
 				if (typeof localStorage !== "undefined") {
 					localStorage.setItem(FORMAT_KEY, storedFormat);
 					localStorage.setItem(FLOATING_KEY, storedFloating ? "true" : "false");
 					localStorage.setItem(THEME_MODE_KEY, storedTheme);
+					localStorage.setItem(
+						INCLUDE_DOCUMENTS_CANVAS_LOCAL_KEY,
+						storedIncludeDocumentsCanvas ? "true" : "false",
+					);
 				}
 			} catch {
 				// ignore storage sync failures
@@ -137,11 +162,24 @@ export function PopupApp() {
 		) => {
 			if (areaName !== "local") return;
 			const themeChange = changes[THEME_MODE_KEY];
-			if (!themeChange) return;
-			const nextTheme = themeChange.newValue === "dark" ? "dark" : "light";
-			setThemeState(nextTheme);
+			if (themeChange) {
+				const nextTheme = themeChange.newValue === "dark" ? "dark" : "light";
+				setThemeState(nextTheme);
+				if (typeof localStorage !== "undefined") {
+					localStorage.setItem(THEME_MODE_KEY, nextTheme);
+				}
+			}
+			const includeDocumentsCanvasChange =
+				changes[INCLUDE_DOCUMENTS_CANVAS_KEY];
+			if (!includeDocumentsCanvasChange) return;
+			const nextIncludeDocumentsCanvas =
+				includeDocumentsCanvasChange.newValue !== false;
+			setIncludeDocumentsCanvasState(nextIncludeDocumentsCanvas);
 			if (typeof localStorage !== "undefined") {
-				localStorage.setItem(THEME_MODE_KEY, nextTheme);
+				localStorage.setItem(
+					INCLUDE_DOCUMENTS_CANVAS_LOCAL_KEY,
+					nextIncludeDocumentsCanvas ? "true" : "false",
+				);
 			}
 		};
 		browser.storage.onChanged.addListener(onChanged);
@@ -257,6 +295,17 @@ export function PopupApp() {
 		void setThemeMode(next).catch(() => undefined);
 	}, []);
 
+	const toggleIncludeDocumentsCanvas = React.useCallback((next: boolean) => {
+		setIncludeDocumentsCanvasState(next);
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem(
+				INCLUDE_DOCUMENTS_CANVAS_LOCAL_KEY,
+				next ? "true" : "false",
+			);
+		}
+		void setIncludeDocumentsCanvas(next).catch(() => undefined);
+	}, []);
+
 	const runChatAction = React.useCallback(
 		(target: "file" | "clipboard", selectedMessageIds?: string[]) => {
 			if (activeTabId == null) return;
@@ -287,6 +336,7 @@ export function PopupApp() {
 					format,
 					target,
 					selectedMessageIds,
+					includeDocumentsCanvas,
 				})
 				.then((result) => {
 					if (result?.ok === false) {
@@ -297,14 +347,18 @@ export function PopupApp() {
 				})
 				.catch((err) => setError(err?.message || "Chat action failed."));
 		},
-		[activeTabId, format],
+		[activeTabId, format, includeDocumentsCanvas],
 	);
 
 	const runProjectAction = React.useCallback(() => {
 		if (activeTabId == null) return;
 		setError("");
 		void browser.tabs
-			.sendMessage(activeTabId, { type: "EXPORT_PROJECT", format })
+			.sendMessage(activeTabId, {
+				type: "EXPORT_PROJECT",
+				format,
+				includeDocumentsCanvas,
+			})
 			.then((result) => {
 				if (result?.ok === false) {
 					setError(result.error || "Project export failed.");
@@ -313,7 +367,7 @@ export function PopupApp() {
 				window.close();
 			})
 			.catch((err) => setError(err?.message || "Project export failed."));
-	}, [activeTabId, format]);
+	}, [activeTabId, format, includeDocumentsCanvas]);
 
 	const skipProjectExport = React.useCallback(() => {
 		if (activeTabId == null) return;
@@ -386,7 +440,9 @@ export function PopupApp() {
 					}
 					onToggleFloating={toggleFloating}
 					onToggleTheme={toggleTheme}
+					onToggleIncludeDocumentsCanvas={toggleIncludeDocumentsCanvas}
 					showFloatingButton={showFloatingButton}
+					includeDocumentsCanvas={includeDocumentsCanvas}
 					statusText={status || undefined}
 					canSkipProjectExport={canSkipProjectExport}
 					onSkipProjectExport={
