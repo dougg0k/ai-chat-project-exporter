@@ -473,6 +473,8 @@ function FloatingApp(props: {
 					style={{
 						position: "absolute",
 						width: PANEL_WIDTH_PX,
+						maxWidth: PANEL_WIDTH_PX,
+						boxSizing: "border-box",
 						background: theme.panelBackground,
 						border: theme.panelBorder,
 						borderRadius: 14,

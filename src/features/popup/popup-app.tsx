@@ -152,6 +152,8 @@ export function PopupApp() {
 		body.style.margin = "0";
 		body.style.background = theme.appBackground;
 		body.style.color = theme.text;
+		body.style.width = "340px";
+		body.style.maxWidth = "340px";
 		body.style.minWidth = "340px";
 	}, [theme, themeMode]);
 
@@ -405,7 +407,10 @@ export function PopupApp() {
 	return (
 		<main
 			style={{
+				width: 340,
+				maxWidth: 340,
 				minWidth: 340,
+				boxSizing: "border-box",
 				padding: 12,
 				fontFamily: "system-ui, sans-serif",
 				background: theme.appBackground,
@@ -415,6 +420,9 @@ export function PopupApp() {
 			<div
 				style={{
 					background: theme.panelBackground,
+					width: "100%",
+					maxWidth: "100%",
+					boxSizing: "border-box",
 					border: theme.panelBorder,
 					borderRadius: 16,
 					padding: 14,

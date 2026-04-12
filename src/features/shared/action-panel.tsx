@@ -31,7 +31,13 @@ export function ActionPanel(props: ActionPanelProps) {
 
 	return (
 		<div
-			style={{ fontFamily: "system-ui, sans-serif", color: props.theme.text }}
+			style={{
+				fontFamily: "system-ui, sans-serif",
+				color: props.theme.text,
+				width: "100%",
+				maxWidth: "100%",
+				boxSizing: "border-box",
+			}}
 		>
 			<div
 				style={{
@@ -271,17 +277,21 @@ function InfoText(props: { children: React.ReactNode; theme: UiTheme }) {
 
 function StatusText(props: { text: string; theme: UiTheme }) {
 	const [label, ...rest] = props.text.split(":");
-	if (rest.length === 0)
-		return <InfoText theme={props.theme}>{props.text}</InfoText>;
+	const style = {
+		marginBottom: 12,
+		fontSize: 12.5,
+		lineHeight: 1.45,
+		color: props.theme.mutedText,
+		width: "100%",
+		maxWidth: "100%",
+		whiteSpace: "normal" as const,
+		overflowWrap: "anywhere" as const,
+		wordBreak: "break-word" as const,
+		boxSizing: "border-box" as const,
+	};
+	if (rest.length === 0) return <div style={style}>{props.text}</div>;
 	return (
-		<div
-			style={{
-				marginBottom: 12,
-				fontSize: 12.5,
-				lineHeight: 1.45,
-				color: props.theme.mutedText,
-			}}
-		>
+		<div style={style}>
 			<strong>{label}:</strong> {rest.join(":").trim()}
 		</div>
 	);
