@@ -31,7 +31,7 @@ const DEFAULT_OFFSET = { right: 28, bottom: 22 } as const;
 const DEFAULT_BUTTON_SIZE = { width: 114, height: 42 } as const;
 const DRAG_THRESHOLD_PX = 5;
 const PANEL_GAP_PX = 10;
-const PANEL_WIDTH_PX = 332;
+const PANEL_WIDTH_PX = 380;
 
 export function mountFloatingUi(options: {
 	getContext: () => Promise<UiContext>;
@@ -135,6 +135,9 @@ function FloatingApp(props: {
 	const [open, setOpen] = React.useState(false);
 	const [format, setFormat] = React.useState<ExportFormat>("markdown");
 	const [busy, setBusy] = React.useState(false);
+	const [operationStatus, setOperationStatus] = React.useState<string | null>(
+		null,
+	);
 	const [themeMode, setThemeState] = React.useState<ThemeMode>("light");
 	const [includeDocumentsCanvas, setIncludeDocumentsCanvasState] =
 		React.useState(true);
@@ -286,6 +289,20 @@ function FloatingApp(props: {
 
 	React.useEffect(() => props.subscribeContext(setContext), [props]);
 
+	const isDocumentsCanvasOnlyWait = React.useMemo(
+		() =>
+			(context.projectExportStatus ?? "").startsWith(
+				"Documents / canvas are still loading",
+			),
+		[context.projectExportStatus],
+	);
+
+	const actionDisabled =
+		busy ||
+		(context.waiting && (includeDocumentsCanvas || !isDocumentsCanvasOnlyWait));
+	const visibleStatus =
+		context.projectExportStatus ?? operationStatus ?? undefined;
+
 	React.useEffect(() => {
 		if (!open) return;
 		const onPointerDown = (event: PointerEvent) => {
@@ -377,13 +394,17 @@ function FloatingApp(props: {
 		if (selectedMessageIds.length === 0) return;
 
 		setBusy(true);
+		setOperationStatus("Preparing export...");
 		void props
 			.onExportChat(format, includeDocumentsCanvas, selectedMessageIds)
 			.then(() => {
 				setSelectionVisible(false);
 				setOpen(false);
 			})
-			.finally(() => setBusy(false));
+			.finally(() => {
+				setBusy(false);
+				setOperationStatus(null);
+			});
 	}, [
 		format,
 		includeDocumentsCanvas,
@@ -503,7 +524,7 @@ function FloatingApp(props: {
 						}}
 						showFloatingButton={context.showFloatingButton}
 						includeDocumentsCanvas={includeDocumentsCanvas}
-						statusText={context.projectExportStatus ?? undefined}
+						statusText={visibleStatus}
 						canSkipProjectExport={context.projectExportCanSkip === true}
 						onSkipProjectExport={
 							context.projectExportCanSkip
@@ -516,23 +537,27 @@ function FloatingApp(props: {
 									}
 								: undefined
 						}
-						disabled={busy || context.waiting}
+						disabled={actionDisabled}
 						onExport={() => {
 							if (context.pageKind === "project") {
 								setBusy(true);
+								setOperationStatus("Starting project export...");
 								void props
 									.onExportProject(format, includeDocumentsCanvas)
 									.finally(() => {
 										setBusy(false);
+										setOperationStatus(null);
 										void refresh();
 									});
 								return;
 							}
 							setBusy(true);
+							setOperationStatus("Preparing export...");
 							void props
 								.onExportChat(format, includeDocumentsCanvas)
 								.finally(() => {
 									setBusy(false);
+									setOperationStatus(null);
 									setOpen(false);
 								});
 						}}
@@ -543,10 +568,12 @@ function FloatingApp(props: {
 							context.pageKind === "chat"
 								? () => {
 										setBusy(true);
+										setOperationStatus("Preparing clipboard export...");
 										void props
 											.onCopyChat(format, includeDocumentsCanvas)
 											.finally(() => {
 												setBusy(false);
+												setOperationStatus(null);
 												setOpen(false);
 											});
 									}

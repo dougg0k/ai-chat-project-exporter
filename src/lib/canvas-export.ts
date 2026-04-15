@@ -551,45 +551,13 @@ function findCanvasPayload(
 		}
 	}
 
-	for (let i = 0; i < markdown.length; i += 1) {
-		if (markdown[i] !== "{") continue;
-		const prefix = markdown.slice(0, i);
-		const extracted = extractLeadingJsonObject(markdown.slice(i));
-		if (!extracted) continue;
-		const payload = tryParseCanvasPayload(extracted.jsonText);
-		if (payload) return { prefix, payload, suffix: extracted.suffix };
-	}
-
-	return null;
-}
-
-function tryParseCanvasPayload(text: string): any | null {
-	if (!text || text[0] !== "{") return null;
-	try {
-		const parsed = JSON.parse(text);
-		if (!parsed || typeof parsed !== "object") return null;
-		if (typeof parsed.name === "string" && typeof parsed.content === "string")
-			return parsed;
-		if (Array.isArray(parsed.updates)) return parsed;
-		return null;
-	} catch {
-		return null;
-	}
-}
-
-function extractLeadingJsonObject(
-	text: string,
-): { jsonText: string; suffix: string } | null {
-	if (!text) return null;
-	const start = text.search(/\S/);
-	if (start < 0 || text[start] !== "{") return null;
-
+	let start = -1;
 	let depth = 0;
 	let inString = false;
 	let escaped = false;
 
-	for (let i = start; i < text.length; i += 1) {
-		const char = text[i];
+	for (let i = 0; i < markdown.length; i += 1) {
+		const char = markdown[i];
 
 		if (inString) {
 			if (escaped) {
@@ -610,21 +578,42 @@ function extractLeadingJsonObject(
 		}
 
 		if (char === "{") {
+			if (depth === 0) start = i;
 			depth += 1;
 			continue;
 		}
 
-		if (char !== "}") continue;
+		if (char !== "}" || depth === 0) continue;
 		depth -= 1;
-		if (depth === 0) {
+		if (depth !== 0 || start < 0) continue;
+
+		const payload = tryParseCanvasPayload(markdown.slice(start, i + 1));
+		if (payload) {
 			return {
-				jsonText: text.slice(start, i + 1),
-				suffix: text.slice(i + 1),
+				prefix: markdown.slice(0, start),
+				payload,
+				suffix: markdown.slice(i + 1),
 			};
 		}
+
+		start = -1;
 	}
 
 	return null;
+}
+
+function tryParseCanvasPayload(text: string): any | null {
+	if (!text || text[0] !== "{") return null;
+	try {
+		const parsed = JSON.parse(text);
+		if (!parsed || typeof parsed !== "object") return null;
+		if (typeof parsed.name === "string" && typeof parsed.content === "string")
+			return parsed;
+		if (Array.isArray(parsed.updates)) return parsed;
+		return null;
+	} catch {
+		return null;
+	}
 }
 
 function escapeRegExp(text: string): string {

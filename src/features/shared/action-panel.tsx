@@ -88,13 +88,14 @@ export function ActionPanel(props: ActionPanelProps) {
 						display: "flex",
 						gap: 8,
 						marginBottom: 14,
-						flexWrap: "wrap",
+						flexWrap: isChat ? "nowrap" : "wrap",
 					}}
 				>
 					<ActionButton
 						onClick={props.onExport}
 						disabled={props.disabled}
 						theme={props.theme}
+						stretch={isChat}
 					>
 						Export
 					</ActionButton>
@@ -103,6 +104,7 @@ export function ActionPanel(props: ActionPanelProps) {
 							onClick={props.onSelectContentExport}
 							disabled={props.disabled}
 							theme={props.theme}
+							stretch
 						>
 							Select content
 						</ActionButton>
@@ -112,6 +114,7 @@ export function ActionPanel(props: ActionPanelProps) {
 							onClick={props.onClipboard}
 							disabled={props.disabled}
 							theme={props.theme}
+							stretch
 						>
 							Clipboard
 						</ActionButton>
@@ -215,6 +218,7 @@ function ActionButton(props: {
 	children: React.ReactNode;
 	disabled?: boolean;
 	theme: UiTheme;
+	stretch?: boolean;
 }) {
 	return (
 		<button
@@ -222,7 +226,11 @@ function ActionButton(props: {
 			disabled={props.disabled}
 			onClick={props.onClick}
 			style={{
-				padding: "9px 14px",
+				display: "flex",
+				alignItems: "center",
+				justifyContent: "center",
+				textAlign: "center",
+				padding: props.stretch ? "9px 10px" : "9px 14px",
 				minHeight: 38,
 				borderRadius: 11,
 				border: props.theme.buttonBorder,
@@ -233,6 +241,9 @@ function ActionButton(props: {
 				fontWeight: 600,
 				fontSize: 13,
 				letterSpacing: "-0.01em",
+				flex: props.stretch ? "1 1 0" : undefined,
+				minWidth: props.stretch ? 0 : undefined,
+				whiteSpace: "nowrap",
 			}}
 		>
 			{props.children}

@@ -65,6 +65,8 @@ export function PopupApp() {
 	const [canSkipProjectExport, setCanSkipProjectExport] = React.useState(false);
 	const [loadingSelection, setLoadingSelection] = React.useState(false);
 	const [waiting, setWaiting] = React.useState(false);
+	const [busy, setBusy] = React.useState(false);
+	const [operationStatus, setOperationStatus] = React.useState("");
 	const theme = React.useMemo(
 		() => getUiTheme(themeMode, provider),
 		[themeMode, provider],
@@ -144,6 +146,17 @@ export function PopupApp() {
 		void refreshContext();
 	}, [refreshContext]);
 
+	const isDocumentsCanvasOnlyWait = React.useMemo(
+		() => status.startsWith("Documents / canvas are still loading"),
+		[status],
+	);
+
+	const actionDisabled =
+		loadingSelection ||
+		busy ||
+		(waiting && (includeDocumentsCanvas || !isDocumentsCanvasOnlyWait));
+	const visibleStatus = status || operationStatus;
+
 	React.useEffect(() => {
 		const root = document.documentElement;
 		const body = document.body;
@@ -152,9 +165,9 @@ export function PopupApp() {
 		body.style.margin = "0";
 		body.style.background = theme.appBackground;
 		body.style.color = theme.text;
-		body.style.width = "340px";
-		body.style.maxWidth = "340px";
-		body.style.minWidth = "340px";
+		body.style.width = "380px";
+		body.style.maxWidth = "380px";
+		body.style.minWidth = "380px";
 	}, [theme, themeMode]);
 
 	React.useEffect(() => {
@@ -312,6 +325,12 @@ export function PopupApp() {
 		(target: "file" | "clipboard", selectedMessageIds?: string[]) => {
 			if (activeTabId == null) return;
 			setError("");
+			setBusy(true);
+			setOperationStatus(
+				target === "clipboard"
+					? "Preparing clipboard export..."
+					: "Preparing export...",
+			);
 
 			if (target === "clipboard") {
 				void browser.tabs
@@ -319,16 +338,23 @@ export function PopupApp() {
 						type: "GET_RENDERED_CHAT",
 						format,
 						selectedMessageIds,
+						includeDocumentsCanvas,
 					})
 					.then(async (result) => {
 						if (!result?.ok || typeof result.text !== "string") {
 							setError(result?.error || "Clipboard failed.");
+							setBusy(false);
+							setOperationStatus("");
 							return;
 						}
 						await navigator.clipboard.writeText(result.text);
 						window.close();
 					})
-					.catch((err) => setError(err?.message || "Clipboard failed."));
+					.catch((err) => {
+						setError(err?.message || "Clipboard failed.");
+						setBusy(false);
+						setOperationStatus("");
+					});
 				return;
 			}
 
@@ -343,11 +369,17 @@ export function PopupApp() {
 				.then((result) => {
 					if (result?.ok === false) {
 						setError(result.error || "Chat action failed.");
+						setBusy(false);
+						setOperationStatus("");
 						return;
 					}
 					window.close();
 				})
-				.catch((err) => setError(err?.message || "Chat action failed."));
+				.catch((err) => {
+					setError(err?.message || "Chat action failed.");
+					setBusy(false);
+					setOperationStatus("");
+				});
 		},
 		[activeTabId, format, includeDocumentsCanvas],
 	);
@@ -355,6 +387,8 @@ export function PopupApp() {
 	const runProjectAction = React.useCallback(() => {
 		if (activeTabId == null) return;
 		setError("");
+		setBusy(true);
+		setOperationStatus("Starting project export...");
 		void browser.tabs
 			.sendMessage(activeTabId, {
 				type: "EXPORT_PROJECT",
@@ -364,25 +398,42 @@ export function PopupApp() {
 			.then((result) => {
 				if (result?.ok === false) {
 					setError(result.error || "Project export failed.");
+					setBusy(false);
+					setOperationStatus("");
 					return;
 				}
 				window.close();
 			})
-			.catch((err) => setError(err?.message || "Project export failed."));
+			.catch((err) => {
+				setError(err?.message || "Project export failed.");
+				setBusy(false);
+				setOperationStatus("");
+			});
 	}, [activeTabId, format, includeDocumentsCanvas]);
 
 	const skipProjectExport = React.useCallback(() => {
 		if (activeTabId == null) return;
 		setError("");
 		setCanSkipProjectExport(false);
+		setBusy(true);
+		setOperationStatus("Skipping failed chat...");
 		void browser.tabs
 			.sendMessage(activeTabId, { type: "REQUEST_PROJECT_EXPORT_SKIP" })
 			.then((result) => {
 				if (result?.ok === false) {
 					setError(result.error || "Failed to skip chat.");
+					setBusy(false);
+					setOperationStatus("");
+					return;
 				}
+				setBusy(false);
+				setOperationStatus("");
 			})
-			.catch((err) => setError(err?.message || "Failed to skip chat."));
+			.catch((err) => {
+				setError(err?.message || "Failed to skip chat.");
+				setBusy(false);
+				setOperationStatus("");
+			});
 	}, [activeTabId]);
 
 	const openSelectionModal = React.useCallback(() => {
@@ -407,9 +458,9 @@ export function PopupApp() {
 	return (
 		<main
 			style={{
-				width: 340,
-				maxWidth: 340,
-				minWidth: 340,
+				width: 380,
+				maxWidth: 380,
+				minWidth: 380,
 				boxSizing: "border-box",
 				padding: 12,
 				fontFamily: "system-ui, sans-serif",
@@ -423,7 +474,7 @@ export function PopupApp() {
 					width: "100%",
 					maxWidth: "100%",
 					boxSizing: "border-box",
-					border: theme.panelBorder,
+					border: "none",
 					borderRadius: 16,
 					padding: 14,
 					boxShadow: theme.shadow,
@@ -451,12 +502,12 @@ export function PopupApp() {
 					onToggleIncludeDocumentsCanvas={toggleIncludeDocumentsCanvas}
 					showFloatingButton={showFloatingButton}
 					includeDocumentsCanvas={includeDocumentsCanvas}
-					statusText={status || undefined}
+					statusText={visibleStatus || undefined}
 					canSkipProjectExport={canSkipProjectExport}
 					onSkipProjectExport={
 						canSkipProjectExport ? skipProjectExport : undefined
 					}
-					disabled={loadingSelection || waiting}
+					disabled={actionDisabled}
 				/>
 				{error && (
 					<div style={{ marginTop: 10, fontSize: 12, color: theme.errorText }}>

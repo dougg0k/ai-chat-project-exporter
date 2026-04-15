@@ -560,10 +560,14 @@ function getCurrentChatGptLoadingStatus(): string | null {
 	if (inferPageKind(currentUrl()) !== "chat") return null;
 	const currentChatId = extractCurrentChatId(currentUrl());
 	if (!currentChatId) return null;
-	if (hasObservedConversationTextdocs(currentChatId)) {
-		return null;
+	const activeConversation = getActiveConversationForPage();
+	if (!conversationMatchesCurrentChat(activeConversation, currentChatId)) {
+		return "Chat content are still loading, please wait...";
 	}
-	return "Content are still loading, please wait...";
+	if (!hasObservedConversationTextdocs(currentChatId)) {
+		return "Documents / canvas are still loading, please wait...";
+	}
+	return null;
 }
 
 function getCurrentChatGptProjectLoadingStatus(): string | null {
@@ -766,7 +770,9 @@ async function ensureActiveConversationForPage(
 	return getActiveConversationForPage();
 }
 
-async function waitForSingleChatConversationForExport(): Promise<Conversation | null> {
+async function waitForSingleChatConversationForExport(
+	requireDocumentsCanvas = true,
+): Promise<Conversation | null> {
 	if (inferProvider(currentUrl()) !== "chatgpt") {
 		return ensureActiveConversationForPage();
 	}
@@ -778,6 +784,12 @@ async function waitForSingleChatConversationForExport(): Promise<Conversation | 
 		return ensureActiveConversationForPage(false);
 	}
 	const activeConversation = getActiveConversationForPage();
+	if (!requireDocumentsCanvas) {
+		if (conversationMatchesCurrentChat(activeConversation, currentChatId)) {
+			return activeConversation;
+		}
+		return ensureActiveConversationForPage();
+	}
 	if (
 		conversationMatchesCurrentChat(activeConversation, currentChatId) &&
 		hasObservedConversationTextdocs(currentChatId)
@@ -924,7 +936,7 @@ export async function getActiveConversationData(
 }
 
 export async function getActiveConversationForSelection(): Promise<Conversation | null> {
-	return waitForSingleChatConversationForExport();
+	return waitForSingleChatConversationForExport(false);
 }
 
 export async function getActiveProjectData(
@@ -948,7 +960,9 @@ export async function getRenderedChat(
 	selectedMessageIds?: string[],
 	includeDocumentsCanvas = true,
 ): Promise<string> {
-	const conversation = await waitForSingleChatConversationForExport();
+	const conversation = await waitForSingleChatConversationForExport(
+		includeDocumentsCanvas !== false,
+	);
 	if (!conversation) {
 		throw new Error("No chat data available.");
 	}
@@ -967,7 +981,9 @@ export async function exportChat(
 	selectedMessageIds?: string[],
 	includeDocumentsCanvas = true,
 ): Promise<void> {
-	const conversation = await waitForSingleChatConversationForExport();
+	const conversation = await waitForSingleChatConversationForExport(
+		includeDocumentsCanvas !== false,
+	);
 	if (!conversation) {
 		throw new Error("No chat data available.");
 	}

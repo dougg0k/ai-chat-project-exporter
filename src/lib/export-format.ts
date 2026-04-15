@@ -1,6 +1,5 @@
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
-import { deriveConversationTurns } from "./chat-selection";
 import type { Conversation, ExportFormat } from "./types";
 
 const md = new MarkdownIt({
@@ -30,6 +29,23 @@ function totalCharacters(conversation: Conversation): number {
 	);
 }
 
+function countConversationTurns(conversation: Conversation): number {
+	let turns = 0;
+	let hasCurrentTurn = false;
+
+	for (const message of conversation.messages) {
+		if (message.role === "user") {
+			if (hasCurrentTurn) turns += 1;
+			hasCurrentTurn = true;
+			continue;
+		}
+
+		if (!hasCurrentTurn) hasCurrentTurn = true;
+	}
+
+	return hasCurrentTurn ? turns + 1 : 0;
+}
+
 function buildHtmlDocument(title: string, markdown: string): string {
 	const renderedHtml = md.render(markdown);
 	const formattedHtml = renderedHtml
@@ -54,7 +70,7 @@ function buildHtmlDocument(title: string, markdown: string): string {
 }
 
 export function buildMarkdown(conversation: Conversation): string {
-	const totalTurns = deriveConversationTurns(conversation).length;
+	const totalTurns = countConversationTurns(conversation);
 	const lines: string[] = [
 		`# ${conversation.title}`,
 		"",
