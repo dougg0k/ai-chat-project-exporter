@@ -462,9 +462,9 @@ export function PopupApp() {
 				maxWidth: 380,
 				minWidth: 380,
 				boxSizing: "border-box",
-				padding: 12,
+				padding: 0,
 				fontFamily: "system-ui, sans-serif",
-				background: theme.appBackground,
+				background: theme.panelBackground,
 				color: theme.text,
 			}}
 		>
@@ -475,9 +475,9 @@ export function PopupApp() {
 					maxWidth: "100%",
 					boxSizing: "border-box",
 					border: "none",
-					borderRadius: 16,
+					borderRadius: 0,
 					padding: 14,
-					boxShadow: theme.shadow,
+					boxShadow: "none",
 				}}
 			>
 				<ActionPanel
