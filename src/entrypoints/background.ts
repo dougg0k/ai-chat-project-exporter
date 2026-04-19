@@ -25,6 +25,7 @@ import type {
 
 const TAB_URL_TIMEOUT_MS = 15000;
 const CAPTURE_TIMEOUT_MS = 25000;
+const CHATGPT_TEXTDOCS_WAIT_FALLBACK_MS = 15000;
 
 type SenderResponse = {
 	ok: boolean;
@@ -407,6 +408,7 @@ async function captureConversationFromTab(
 ): Promise<Conversation | null> {
 	const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
 	const isChatGpt = expectedPageUrl.includes("chatgpt.com");
+	let textdocsWaitStartedAt: number | null = null;
 
 	while (Date.now() < deadline) {
 		const cached = conversationsByTab.get(tabId);
@@ -419,6 +421,13 @@ async function captureConversationFromTab(
 			)
 		) {
 			if (!isChatGpt || isChatGptConversationReady(tabId, expectedChatId)) {
+				return cached;
+			}
+			textdocsWaitStartedAt ??= Date.now();
+			if (
+				Date.now() - textdocsWaitStartedAt >=
+				CHATGPT_TEXTDOCS_WAIT_FALLBACK_MS
+			) {
 				return cached;
 			}
 		}
@@ -442,6 +451,13 @@ async function captureConversationFromTab(
 		) {
 			const conversation = response.conversation ?? null;
 			if (!isChatGpt || isChatGptConversationReady(tabId, expectedChatId)) {
+				return conversation;
+			}
+			textdocsWaitStartedAt ??= Date.now();
+			if (
+				Date.now() - textdocsWaitStartedAt >=
+				CHATGPT_TEXTDOCS_WAIT_FALLBACK_MS
+			) {
 				return conversation;
 			}
 			conversationsByTab.set(tabId, conversation);

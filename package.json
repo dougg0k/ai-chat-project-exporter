@@ -1,7 +1,7 @@
 {
 	"name": "ai-chat-project-exporter",
 	"private": true,
-	"version": "1.0.17",
+	"version": "1.0.18",
 	"type": "module",
 	"scripts": {
 		"postinstall": "wxt prepare",
@@ -22,13 +22,13 @@
 		"react-dom": "latest"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.4.8",
+		"@biomejs/biome": "2.4.12",
 		"@types/markdown-it": "latest",
 		"@types/react": "latest",
 		"@types/react-dom": "latest",
 		"@wxt-dev/auto-icons": "latest",
 		"@wxt-dev/module-react": "latest",
 		"typescript": "latest",
-		"wxt": "0.20.20"
+		"wxt": "0.20.22"
 	}
 }
