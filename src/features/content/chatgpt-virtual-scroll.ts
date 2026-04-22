@@ -11,8 +11,7 @@ const TOP_SPACER_ATTRIBUTE =
 const BOTTOM_SPACER_ATTRIBUTE =
 	"data-ai-chat-project-exporter-virtual-scroll-bottom-spacer";
 
-// Windowing values are intentionally conservative.
-// They use pixels instead of turn counts because ChatGPT turn heights vary widely.
+// Windowing values stay conservative because ChatGPT turn heights vary widely.
 const MIN_TURNS_TO_VIRTUALIZE = 18;
 const OVERSCAN_ABOVE_PX = 1400;
 const OVERSCAN_BELOW_PX = 2200;
@@ -23,13 +22,33 @@ const MIN_BELOW_TURNS = 6;
 interface TurnEntry {
 	node: HTMLElement;
 	height: number;
-	topOffset: number;
-	bottomOffset: number;
 }
 
 interface AnchorSnapshot {
 	element: HTMLElement;
 	offsetFromScrollerTop: number;
+}
+
+interface BoundDom {
+	root: HTMLElement;
+	scroller: HTMLElement;
+	turnNodes: HTMLElement[];
+}
+
+interface FlushFlags {
+	bind: boolean;
+	rebuild: boolean;
+	measure: boolean;
+	window: boolean;
+}
+
+function emptyFlushFlags(): FlushFlags {
+	return {
+		bind: false,
+		rebuild: false,
+		measure: false,
+		window: false,
+	};
 }
 
 function isElement(node: Node | null | undefined): node is HTMLElement {
@@ -129,29 +148,42 @@ function isSpacerElement(element: Element | null | undefined) {
 	);
 }
 
+function mergeFlushFlags(target: FlushFlags, next: Partial<FlushFlags>) {
+	if (next.bind) target.bind = true;
+	if (next.rebuild) target.rebuild = true;
+	if (next.measure) target.measure = true;
+	if (next.window) target.window = true;
+}
+
 class ChatGptVirtualScrollController {
 	private enabled = false;
-	private routeKey = "";
 	private destroyed = false;
+	private routeKey = "";
 	private root: HTMLElement | null = null;
 	private scroller: HTMLElement | null = null;
 	private turns: TurnEntry[] = [];
+	private prefixHeights: number[] = [0];
 	private renderedStart = 0;
 	private renderedEnd = 0;
-	private totalLayoutHeight = 0;
 	private topSpacer: HTMLDivElement | null = null;
 	private bottomSpacer: HTMLDivElement | null = null;
 	private bootstrapObserver: MutationObserver | null = null;
 	private rootObserver: MutationObserver | null = null;
 	private resizeObserver: ResizeObserver | null = null;
-	private rafPending = false;
+	private flushScheduled = false;
+	private pendingFlags = emptyFlushFlags();
 	private internalMutation = false;
 
 	constructor() {
 		void getChatGptVirtualScrollEnabled()
 			.then((enabled) => {
 				this.enabled = enabled;
-				this.refresh();
+				this.requestFlush({
+					bind: true,
+					rebuild: true,
+					measure: true,
+					window: true,
+				});
 			})
 			.catch(() => undefined);
 		browser.storage.onChanged.addListener(this.handleStorageChanged);
@@ -159,23 +191,12 @@ class ChatGptVirtualScrollController {
 
 	refresh = () => {
 		if (this.destroyed) return;
-		if (!this.enabled || !isSupportedChatGptChatPage()) {
-			this.teardown({ restoreTurns: true });
-			return;
-		}
-
-		const nextRouteKey = `${window.location.pathname}${window.location.search}`;
-		const routeChanged = this.routeKey !== nextRouteKey;
-		if (routeChanged) {
-			this.routeKey = nextRouteKey;
-			this.teardown({ restoreTurns: true });
-		}
-
-		if (this.ensureActiveRoot()) {
-			this.scheduleSync();
-			return;
-		}
-		this.armBootstrapObserver();
+		this.requestFlush({
+			bind: true,
+			rebuild: true,
+			measure: true,
+			window: true,
+		});
 	};
 
 	destroy = () => {
@@ -192,71 +213,172 @@ class ChatGptVirtualScrollController {
 		if (areaName !== "local") return;
 		if (!(CHATGPT_VIRTUAL_SCROLL_KEY in changes)) return;
 		this.enabled = changes[CHATGPT_VIRTUAL_SCROLL_KEY]?.newValue === true;
-		this.refresh();
+		this.requestFlush({
+			bind: true,
+			rebuild: true,
+			measure: true,
+			window: true,
+		});
 	};
 
-	private ensureActiveRoot() {
-		if (
-			this.root?.isConnected &&
-			this.scroller?.isConnected &&
-			this.root.querySelector(TURN_SELECTOR)
-		) {
+	private requestFlush(next: Partial<FlushFlags>) {
+		if (this.destroyed) return;
+		mergeFlushFlags(this.pendingFlags, next);
+		if (this.flushScheduled) return;
+		this.flushScheduled = true;
+		requestAnimationFrame(() => {
+			this.flushScheduled = false;
+			this.flush();
+		});
+	}
+
+	private flush() {
+		if (this.destroyed) return;
+		const flags = this.pendingFlags;
+		this.pendingFlags = emptyFlushFlags();
+
+		if (!this.enabled || !isSupportedChatGptChatPage()) {
+			this.teardown({ restoreTurns: true });
+			return;
+		}
+
+		const nextRouteKey = `${window.location.pathname}${window.location.search}`;
+		if (this.routeKey !== nextRouteKey) {
+			this.routeKey = nextRouteKey;
+			this.teardown({ restoreTurns: true });
+			flags.bind = true;
+			flags.rebuild = true;
+			flags.measure = true;
+			flags.window = true;
+		}
+
+		if (flags.bind && !this.ensureBound()) {
+			this.armBootstrapObserver();
+			return;
+		}
+		this.disarmBootstrapObserver();
+
+		if (!this.root || !this.scroller || this.turns.length === 0) return;
+
+		if (flags.rebuild) this.rebuildStateFromDom();
+		if (flags.measure) this.remeasureRenderedTurns();
+
+		if (this.turns.length < MIN_TURNS_TO_VIRTUALIZE) {
+			this.ensureAllRendered();
+			this.observeRenderedTurns();
+			this.syncSpacerHeights();
+			return;
+		}
+
+		if (flags.window || flags.measure || flags.rebuild || flags.bind) {
+			const nextWindow = this.getDesiredWindow();
+			if (nextWindow) {
+				this.applyWindow(nextWindow.start, nextWindow.end);
+			}
+		}
+
+		this.observeRenderedTurns();
+		this.syncSpacerHeights();
+	}
+
+	private armBootstrapObserver() {
+		if (this.bootstrapObserver) return;
+		this.bootstrapObserver = new MutationObserver(() => {
+			this.requestFlush({
+				bind: true,
+				rebuild: true,
+				measure: true,
+				window: true,
+			});
+		});
+		this.bootstrapObserver.observe(document.documentElement, {
+			childList: true,
+			subtree: true,
+		});
+	}
+
+	private disarmBootstrapObserver() {
+		this.bootstrapObserver?.disconnect();
+		this.bootstrapObserver = null;
+	}
+
+	private teardown(options: { restoreTurns: boolean }) {
+		this.disarmBootstrapObserver();
+		this.rootObserver?.disconnect();
+		this.rootObserver = null;
+		this.resizeObserver?.disconnect();
+		this.resizeObserver = null;
+		if (options.restoreTurns) this.restoreAllTurns();
+		this.topSpacer?.remove();
+		this.bottomSpacer?.remove();
+		this.topSpacer = null;
+		this.bottomSpacer = null;
+		this.scroller?.removeEventListener("scroll", this.handleScroll);
+		this.root = null;
+		this.scroller = null;
+		this.turns = [];
+		this.prefixHeights = [0];
+		this.renderedStart = 0;
+		this.renderedEnd = 0;
+		this.pendingFlags = emptyFlushFlags();
+		this.internalMutation = false;
+	}
+
+	private ensureBound() {
+		const existingTurns =
+			this.root?.isConnected && this.scroller?.isConnected
+				? Array.from(this.root.children).filter((child): child is HTMLElement =>
+						isTurn(child),
+					)
+				: [];
+		if (this.root && this.scroller && existingTurns.length > 0) {
 			this.ensureSpacers();
 			return true;
 		}
 
-		const anyTurn = document.querySelector<HTMLElement>(TURN_SELECTOR);
-		if (!anyTurn) return false;
-		const nextRoot = findTurnRoot(anyTurn);
-		if (!nextRoot) return false;
-		const nextScroller = findScrollContainerFromTurn(anyTurn);
+		const bound = this.findBoundDom();
+		if (!bound) return false;
 		const structureChanged =
-			this.root !== nextRoot || this.scroller !== nextScroller;
-		if (!structureChanged && this.root && this.scroller) {
-			this.ensureSpacers();
-			return true;
-		}
+			this.root !== bound.root || this.scroller !== bound.scroller;
+		if (structureChanged) this.teardown({ restoreTurns: true });
 
-		this.teardown({ restoreTurns: true });
-		this.root = nextRoot;
-		this.scroller = nextScroller;
-		this.turns = this.collectTurnsFromRoot();
+		this.root = bound.root;
+		this.scroller = bound.scroller;
+		this.turns = bound.turnNodes.map((node) => ({
+			node,
+			height: measureElementHeight(node),
+		}));
 		this.renderedStart = 0;
 		this.renderedEnd = this.turns.length;
-		this.totalLayoutHeight = this.getTotalLayoutHeightFromEntries(this.turns);
+		this.rebuildPrefixHeights();
 		this.ensureSpacers();
-		nextScroller.addEventListener("scroll", this.handleScroll, {
-			passive: true,
-		});
-		this.rootObserver = new MutationObserver(this.handleRootMutations);
-		this.rootObserver.observe(nextRoot, { childList: true, subtree: false });
-		this.resizeObserver = new ResizeObserver(this.handleRenderedTurnResize);
-		this.observeRenderedTurns();
+
+		if (structureChanged || !this.rootObserver) {
+			this.scroller.addEventListener("scroll", this.handleScroll, {
+				passive: true,
+			});
+			this.rootObserver = new MutationObserver(this.handleRootMutations);
+			this.rootObserver.observe(this.root, {
+				childList: true,
+				subtree: false,
+			});
+			this.resizeObserver = new ResizeObserver(this.handleRenderedResize);
+		}
+
 		return true;
 	}
 
-	private collectTurnsFromRoot() {
-		if (!this.root) return [] as TurnEntry[];
-		const nodes = Array.from(this.root.children).filter(
+	private findBoundDom(): BoundDom | null {
+		const anyTurn = document.querySelector<HTMLElement>(TURN_SELECTOR);
+		if (!anyTurn) return null;
+		const root = findTurnRoot(anyTurn);
+		if (!root) return null;
+		const scroller = findScrollContainerFromTurn(anyTurn);
+		const turnNodes = Array.from(root.children).filter(
 			(node): node is HTMLElement => isTurn(node),
 		);
-		if (nodes.length === 0) return [] as TurnEntry[];
-		const baselineTop = nodes[0]?.getBoundingClientRect().top ?? 0;
-		return nodes.map((node) => {
-			const rect = node.getBoundingClientRect();
-			const topOffset = Math.max(0, rect.top - baselineTop);
-			const bottomOffset = Math.max(topOffset + 1, rect.bottom - baselineTop);
-			return {
-				node,
-				height: Math.max(1, bottomOffset - topOffset),
-				topOffset,
-				bottomOffset,
-			};
-		});
-	}
-
-	private getTotalLayoutHeightFromEntries(entries: TurnEntry[]) {
-		return entries[entries.length - 1]?.bottomOffset ?? 0;
+		if (turnNodes.length === 0) return null;
+		return { root, scroller, turnNodes };
 	}
 
 	private ensureSpacers() {
@@ -287,80 +409,6 @@ class ChatGptVirtualScrollController {
 			this.root.appendChild(spacer);
 			this.bottomSpacer = spacer;
 		}
-		this.syncSpacerHeights();
-	}
-
-	private armBootstrapObserver() {
-		if (this.bootstrapObserver) return;
-		this.bootstrapObserver = new MutationObserver(() => {
-			if (this.ensureActiveRoot()) {
-				this.disarmBootstrapObserver();
-				this.scheduleSync();
-			}
-		});
-		this.bootstrapObserver.observe(document.documentElement, {
-			childList: true,
-			subtree: true,
-		});
-	}
-
-	private disarmBootstrapObserver() {
-		this.bootstrapObserver?.disconnect();
-		this.bootstrapObserver = null;
-	}
-
-	private teardown(options: { restoreTurns: boolean }) {
-		this.disarmBootstrapObserver();
-		this.rootObserver?.disconnect();
-		this.rootObserver = null;
-		this.resizeObserver?.disconnect();
-		this.resizeObserver = null;
-		if (options.restoreTurns) this.restoreAllTurns();
-		this.topSpacer?.remove();
-		this.bottomSpacer?.remove();
-		this.topSpacer = null;
-		this.bottomSpacer = null;
-		this.scroller?.removeEventListener("scroll", this.handleScroll);
-		this.root = null;
-		this.scroller = null;
-		this.turns = [];
-		this.renderedStart = 0;
-		this.renderedEnd = 0;
-		this.totalLayoutHeight = 0;
-		this.rafPending = false;
-		this.internalMutation = false;
-	}
-
-	private restoreAllTurns() {
-		if (!this.root || this.turns.length === 0) return;
-		const anchor = this.captureAnchor();
-		this.withInternalMutation(() => {
-			for (const child of Array.from(this.root.children)) {
-				if (isTurn(child)) child.remove();
-			}
-			for (const entry of this.turns) {
-				this.root?.insertBefore(entry.node, this.bottomSpacer ?? null);
-			}
-			this.renderedStart = 0;
-			this.renderedEnd = this.turns.length;
-			this.remeasureRenderedRange();
-			this.totalLayoutHeight = this.getTotalLayoutHeightFromEntries(this.turns);
-			this.syncSpacerHeights();
-			this.observeRenderedTurns();
-		});
-		this.restoreAnchor(anchor);
-	}
-
-	private rebuildFromDom() {
-		if (!this.root) return;
-		this.restoreAllTurns();
-		this.turns = this.collectTurnsFromRoot();
-		this.renderedStart = 0;
-		this.renderedEnd = this.turns.length;
-		this.totalLayoutHeight = this.getTotalLayoutHeightFromEntries(this.turns);
-		this.ensureSpacers();
-		this.observeRenderedTurns();
-		this.scheduleSync();
 	}
 
 	private handleRootMutations = (mutations: MutationRecord[]) => {
@@ -370,151 +418,109 @@ class ChatGptVirtualScrollController {
 				Array.from(mutation.removedNodes),
 			)) {
 				if (!isElement(node)) continue;
-				if (
-					isSpacerElement(node) ||
-					node.querySelector(`[${TOP_SPACER_ATTRIBUTE}]`) ||
-					node.querySelector(`[${BOTTOM_SPACER_ATTRIBUTE}]`)
-				) {
-					continue;
-				}
-				const hasTurnDescendant = node.querySelector(TURN_SELECTOR) !== null;
-				if (isTurn(node) || hasTurnDescendant) {
-					this.rebuildFromDom();
+				if (isSpacerElement(node)) continue;
+				if (isTurn(node)) {
+					this.requestFlush({
+						bind: true,
+						rebuild: true,
+						measure: true,
+						window: true,
+					});
 					return;
 				}
 			}
 		}
 	};
 
-	private applyHeightDelta(index: number, nextHeight: number) {
-		const entry = this.turns[index];
-		if (!entry) return;
-		const delta = nextHeight - entry.height;
-		if (Math.abs(delta) < 0.5) return;
-		entry.height = nextHeight;
-		entry.bottomOffset += delta;
-		for (
-			let nextIndex = index + 1;
-			nextIndex < this.turns.length;
-			nextIndex += 1
-		) {
-			const nextEntry = this.turns[nextIndex];
-			if (!nextEntry) continue;
-			nextEntry.topOffset += delta;
-			nextEntry.bottomOffset += delta;
-		}
-		this.totalLayoutHeight = Math.max(0, this.totalLayoutHeight + delta);
-	}
-
-	private handleRenderedTurnResize = (entries: ResizeObserverEntry[]) => {
-		let changed = false;
-		for (const resizeEntry of entries) {
-			const node = resizeEntry.target;
-			if (!(node instanceof HTMLElement)) continue;
-			const index = this.turns.findIndex((entry) => entry.node === node);
-			if (index < 0) continue;
-			const nextHeight = Math.max(
-				resizeEntry.contentRect.height,
-				measureElementHeight(node),
-			);
-			const before = this.turns[index]?.height ?? 0;
-			this.applyHeightDelta(index, nextHeight);
-			if (Math.abs((this.turns[index]?.height ?? 0) - before) >= 0.5)
-				changed = true;
-		}
-		if (!changed) return;
-		this.syncSpacerHeights();
+	private handleRenderedResize = () => {
+		this.requestFlush({ measure: true, window: true });
 	};
 
 	private handleScroll = () => {
-		this.scheduleSync();
+		this.requestFlush({ window: true });
 	};
 
-	private scheduleSync() {
-		if (this.rafPending) return;
-		this.rafPending = true;
-		requestAnimationFrame(() => {
-			this.rafPending = false;
-			this.sync();
-		});
+	private rebuildStateFromDom() {
+		if (!this.root) return;
+		this.restoreAllTurns();
+		const turnNodes = Array.from(this.root.children).filter(
+			(node): node is HTMLElement => isTurn(node),
+		);
+		this.turns = turnNodes.map((node) => ({
+			node,
+			height: measureElementHeight(node),
+		}));
+		this.renderedStart = 0;
+		this.renderedEnd = this.turns.length;
+		this.rebuildPrefixHeights();
 	}
 
-	private sync() {
-		if (!this.root || !this.scroller) return;
-		if (this.turns.length === 0) return;
-		if (this.turns.length < MIN_TURNS_TO_VIRTUALIZE) {
-			if (this.renderedStart !== 0 || this.renderedEnd !== this.turns.length) {
-				this.applyWindow(0, this.turns.length);
-			} else {
-				this.remeasureRenderedRange();
-				this.syncSpacerHeights();
+	private rebuildPrefixHeights() {
+		const nextPrefix = new Array(this.turns.length + 1);
+		nextPrefix[0] = 0;
+		for (let index = 0; index < this.turns.length; index += 1) {
+			nextPrefix[index + 1] =
+				nextPrefix[index]! + Math.max(1, this.turns[index]!.height);
+		}
+		this.prefixHeights = nextPrefix;
+	}
+
+	private ensureAllRendered() {
+		if (!this.root || !this.bottomSpacer) return;
+		if (this.renderedStart === 0 && this.renderedEnd === this.turns.length)
+			return;
+		const anchor = this.captureAnchor();
+		this.withInternalMutation(() => {
+			for (const child of Array.from(this.root.children)) {
+				if (isTurn(child)) child.remove();
 			}
-			return;
-		}
-
-		const anchorIndex = this.getAnchorIndex();
-		if (anchorIndex == null) return;
-		const nextWindow = this.getDesiredWindow(anchorIndex);
-		if (
-			nextWindow.start === this.renderedStart &&
-			nextWindow.end === this.renderedEnd
-		) {
-			this.remeasureRenderedRange();
-			this.syncSpacerHeights();
-			return;
-		}
-		this.applyWindow(nextWindow.start, nextWindow.end);
+			const fragment = document.createDocumentFragment();
+			for (const entry of this.turns) fragment.appendChild(entry.node);
+			this.root?.insertBefore(fragment, this.bottomSpacer);
+			this.renderedStart = 0;
+			this.renderedEnd = this.turns.length;
+		});
+		this.restoreAnchor(anchor);
 	}
 
-	private getAnchorIndex() {
-		if (!this.scroller) return null;
-		const renderedEntries = this.turns.slice(
-			this.renderedStart,
-			this.renderedEnd,
-		);
-		if (renderedEntries.length === 0) return null;
-		const scrollerTop = this.scroller.getBoundingClientRect().top;
-		const visibleEntry =
-			renderedEntries.find(
-				(entry) => entry.node.getBoundingClientRect().bottom > scrollerTop + 1,
-			) ??
-			renderedEntries[renderedEntries.length - 1] ??
-			null;
-		if (!visibleEntry) return null;
-		return this.turns.indexOf(visibleEntry);
+	private observeRenderedTurns() {
+		this.resizeObserver?.disconnect();
+		for (let index = this.renderedStart; index < this.renderedEnd; index += 1) {
+			const entry = this.turns[index];
+			if (!entry?.node.isConnected) continue;
+			this.resizeObserver?.observe(entry.node);
+		}
 	}
 
-	private getDesiredWindow(anchorIndex: number) {
-		const totalTurns = this.turns.length;
-		if (totalTurns <= MIN_TURNS_TO_VIRTUALIZE) {
-			return { start: 0, end: totalTurns };
+	private remeasureRenderedTurns() {
+		let changed = false;
+		for (let index = this.renderedStart; index < this.renderedEnd; index += 1) {
+			const entry = this.turns[index];
+			if (!entry?.node.isConnected) continue;
+			const nextHeight = measureElementHeight(entry.node);
+			if (Math.abs(nextHeight - entry.height) < 0.5) continue;
+			entry.height = nextHeight;
+			changed = true;
 		}
+		if (changed) this.rebuildPrefixHeights();
+	}
 
-		const anchorEntry = this.turns[anchorIndex];
-		const renderedStartEntry = this.turns[this.renderedStart];
-		const renderedEndEntry = this.turns[this.renderedEnd - 1];
-		if (!anchorEntry || !renderedStartEntry || !renderedEndEntry) {
-			return { start: 0, end: totalTurns };
-		}
+	private getDesiredWindow() {
+		if (!this.root || !this.scroller || this.turns.length === 0) return null;
+		const anchorIndex = this.getVisibleAnchorIndex();
+		if (anchorIndex == null) return null;
 
-		const pixelsBeforeAnchor = Math.max(
-			0,
-			anchorEntry.topOffset - renderedStartEntry.topOffset,
-		);
-		const pixelsAfterAnchor = Math.max(
-			0,
-			renderedEndEntry.bottomOffset - anchorEntry.bottomOffset,
-		);
-		const currentWindowStartSafe =
-			pixelsBeforeAnchor >= EDGE_BUFFER_PX &&
-			anchorIndex - this.renderedStart >= MIN_ABOVE_TURNS;
-		const currentWindowEndSafe =
-			pixelsAfterAnchor >= EDGE_BUFFER_PX &&
-			this.renderedEnd - anchorIndex - 1 >= MIN_BELOW_TURNS;
+		const currentStartSafe =
+			anchorIndex - this.renderedStart >= MIN_ABOVE_TURNS &&
+			this.distanceAboveAnchor(anchorIndex, this.renderedStart) >=
+				EDGE_BUFFER_PX;
+		const currentEndSafe =
+			this.renderedEnd - anchorIndex - 1 >= MIN_BELOW_TURNS &&
+			this.distanceBelowAnchor(anchorIndex, this.renderedEnd) >= EDGE_BUFFER_PX;
 		if (
 			this.renderedStart < this.renderedEnd &&
-			currentWindowStartSafe &&
-			currentWindowEndSafe
+			currentStartSafe &&
+			currentEndSafe
 		) {
 			return {
 				start: this.renderedStart,
@@ -523,14 +529,11 @@ class ChatGptVirtualScrollController {
 		}
 
 		let start = anchorIndex;
-		let aboveTurns = 0;
 		while (start > 0) {
 			const nextStart = start - 1;
-			const nextAboveTurns = aboveTurns + 1;
-			const nextAbovePixels =
-				anchorEntry.topOffset - this.turns[nextStart]!.topOffset;
+			const nextAboveTurns = anchorIndex - nextStart;
+			const nextAbovePixels = this.distanceAboveAnchor(anchorIndex, nextStart);
 			start = nextStart;
-			aboveTurns = nextAboveTurns;
 			if (
 				nextAbovePixels >= OVERSCAN_ABOVE_PX &&
 				nextAboveTurns >= MIN_ABOVE_TURNS
@@ -540,14 +543,11 @@ class ChatGptVirtualScrollController {
 		}
 
 		let end = anchorIndex + 1;
-		let belowTurns = 0;
-		while (end < totalTurns) {
+		while (end < this.turns.length) {
 			const nextEnd = end + 1;
-			const nextBelowTurns = belowTurns + 1;
-			const nextBelowPixels =
-				this.turns[nextEnd - 1]!.bottomOffset - anchorEntry.bottomOffset;
+			const nextBelowTurns = nextEnd - anchorIndex - 1;
+			const nextBelowPixels = this.distanceBelowAnchor(anchorIndex, nextEnd);
 			end = nextEnd;
-			belowTurns = nextBelowTurns;
 			if (
 				nextBelowPixels >= OVERSCAN_BELOW_PX &&
 				nextBelowTurns >= MIN_BELOW_TURNS
@@ -559,8 +559,34 @@ class ChatGptVirtualScrollController {
 		return { start, end };
 	}
 
+	private distanceAboveAnchor(anchorIndex: number, startIndex: number) {
+		return Math.max(
+			0,
+			this.prefixHeights[anchorIndex]! - this.prefixHeights[startIndex]!,
+		);
+	}
+
+	private distanceBelowAnchor(anchorIndex: number, endIndex: number) {
+		return Math.max(
+			0,
+			this.prefixHeights[endIndex]! - this.prefixHeights[anchorIndex + 1]!,
+		);
+	}
+
+	private getVisibleAnchorIndex() {
+		if (!this.scroller) return null;
+		const scrollerTop = this.scroller.getBoundingClientRect().top;
+		for (let index = this.renderedStart; index < this.renderedEnd; index += 1) {
+			const node = this.turns[index]?.node;
+			if (!node?.isConnected) continue;
+			if (node.getBoundingClientRect().bottom > scrollerTop + 1) return index;
+		}
+		return this.renderedEnd > this.renderedStart ? this.renderedEnd - 1 : null;
+	}
+
 	private applyWindow(start: number, end: number) {
 		if (!this.root || !this.bottomSpacer) return;
+		if (start === this.renderedStart && end === this.renderedEnd) return;
 		const anchor = this.captureAnchor();
 		this.withInternalMutation(() => {
 			if (start < this.renderedStart) {
@@ -612,9 +638,6 @@ class ChatGptVirtualScrollController {
 
 			this.renderedStart = start;
 			this.renderedEnd = end;
-			this.remeasureRenderedRange();
-			this.syncSpacerHeights();
-			this.observeRenderedTurns();
 		});
 		this.restoreAnchor(anchor);
 	}
@@ -627,36 +650,41 @@ class ChatGptVirtualScrollController {
 		return null;
 	}
 
-	private observeRenderedTurns() {
-		this.resizeObserver?.disconnect();
-		for (const entry of this.turns.slice(
-			this.renderedStart,
-			this.renderedEnd,
-		)) {
-			this.resizeObserver?.observe(entry.node);
+	private syncSpacerHeights() {
+		if (!this.topSpacer || !this.bottomSpacer) return;
+		if (this.turns.length === 0 || this.renderedStart >= this.renderedEnd) {
+			this.topSpacer.style.height = "0px";
+			this.topSpacer.style.minHeight = "0px";
+			this.bottomSpacer.style.height = "0px";
+			this.bottomSpacer.style.minHeight = "0px";
+			return;
 		}
+		const totalHeight = this.prefixHeights[this.turns.length] ?? 0;
+		const topHeight = this.prefixHeights[this.renderedStart] ?? 0;
+		const bottomHeight = Math.max(
+			0,
+			totalHeight - (this.prefixHeights[this.renderedEnd] ?? 0),
+		);
+		this.topSpacer.style.height = `${topHeight}px`;
+		this.topSpacer.style.minHeight = `${topHeight}px`;
+		this.bottomSpacer.style.height = `${bottomHeight}px`;
+		this.bottomSpacer.style.minHeight = `${bottomHeight}px`;
 	}
 
 	private captureAnchor(): AnchorSnapshot | null {
 		if (!this.scroller) return null;
-		const renderedEntries = this.turns.slice(
-			this.renderedStart,
-			this.renderedEnd,
-		);
-		if (renderedEntries.length === 0) return null;
 		const scrollerTop = this.scroller.getBoundingClientRect().top;
-		const visibleEntry =
-			renderedEntries.find(
-				(entry) => entry.node.getBoundingClientRect().bottom > scrollerTop + 1,
-			) ??
-			renderedEntries[renderedEntries.length - 1] ??
-			null;
-		if (!visibleEntry) return null;
-		return {
-			element: visibleEntry.node,
-			offsetFromScrollerTop:
-				visibleEntry.node.getBoundingClientRect().top - scrollerTop,
-		};
+		for (let index = this.renderedStart; index < this.renderedEnd; index += 1) {
+			const node = this.turns[index]?.node;
+			if (!node?.isConnected) continue;
+			const rect = node.getBoundingClientRect();
+			if (rect.bottom <= scrollerTop + 1) continue;
+			return {
+				element: node,
+				offsetFromScrollerTop: rect.top - scrollerTop,
+			};
+		}
+		return null;
 	}
 
 	private restoreAnchor(anchorSnapshot: AnchorSnapshot | null) {
@@ -673,70 +701,20 @@ class ChatGptVirtualScrollController {
 		if (delta !== 0) this.scroller.scrollTop += delta;
 	}
 
-	private syncSpacerHeights() {
-		if (!this.topSpacer || !this.bottomSpacer) return;
-		if (this.renderedStart >= this.renderedEnd || this.turns.length === 0) {
-			this.topSpacer.style.height = "0px";
-			this.topSpacer.style.minHeight = "0px";
-			this.bottomSpacer.style.height = "0px";
-			this.bottomSpacer.style.minHeight = "0px";
-			return;
-		}
-		const topHeight = Math.max(
-			0,
-			this.turns[this.renderedStart]?.topOffset ?? 0,
-		);
-		const lastRenderedEntry = this.turns[this.renderedEnd - 1];
-		const bottomHeight = Math.max(
-			0,
-			this.totalLayoutHeight - (lastRenderedEntry?.bottomOffset ?? 0),
-		);
-		this.topSpacer.style.height = `${topHeight}px`;
-		this.topSpacer.style.minHeight = `${topHeight}px`;
-		this.bottomSpacer.style.height = `${bottomHeight}px`;
-		this.bottomSpacer.style.minHeight = `${bottomHeight}px`;
-	}
-
-	private remeasureRenderedRange() {
-		if (this.renderedStart >= this.renderedEnd) return;
-		const firstRenderedEntry = this.turns[this.renderedStart];
-		const lastRenderedEntry = this.turns[this.renderedEnd - 1];
-		if (
-			!firstRenderedEntry?.node.isConnected ||
-			!lastRenderedEntry?.node.isConnected
-		) {
-			return;
-		}
-
-		const baseRectTop = firstRenderedEntry.node.getBoundingClientRect().top;
-		const baseOffset = firstRenderedEntry.topOffset;
-		const oldWindowBottom = lastRenderedEntry.bottomOffset;
-		let nextWindowBottom = oldWindowBottom;
-
-		for (let index = this.renderedStart; index < this.renderedEnd; index += 1) {
-			const entry = this.turns[index];
-			if (!entry?.node.isConnected) continue;
-			const rect = entry.node.getBoundingClientRect();
-			const nextTopOffset = Math.max(0, baseOffset + (rect.top - baseRectTop));
-			const nextBottomOffset = Math.max(
-				nextTopOffset + 1,
-				baseOffset + (rect.bottom - baseRectTop),
-			);
-			entry.topOffset = nextTopOffset;
-			entry.bottomOffset = nextBottomOffset;
-			entry.height = Math.max(1, nextBottomOffset - nextTopOffset);
-			nextWindowBottom = nextBottomOffset;
-		}
-
-		const delta = nextWindowBottom - oldWindowBottom;
-		if (Math.abs(delta) < 0.5) return;
-		for (let index = this.renderedEnd; index < this.turns.length; index += 1) {
-			const entry = this.turns[index];
-			if (!entry) continue;
-			entry.topOffset += delta;
-			entry.bottomOffset += delta;
-		}
-		this.totalLayoutHeight = Math.max(0, this.totalLayoutHeight + delta);
+	private restoreAllTurns() {
+		if (!this.root || !this.bottomSpacer || this.turns.length === 0) return;
+		const anchor = this.captureAnchor();
+		this.withInternalMutation(() => {
+			for (const child of Array.from(this.root.children)) {
+				if (isTurn(child)) child.remove();
+			}
+			const fragment = document.createDocumentFragment();
+			for (const entry of this.turns) fragment.appendChild(entry.node);
+			this.root?.insertBefore(fragment, this.bottomSpacer);
+			this.renderedStart = 0;
+			this.renderedEnd = this.turns.length;
+		});
+		this.restoreAnchor(anchor);
 	}
 
 	private withInternalMutation(task: () => void) {

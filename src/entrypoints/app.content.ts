@@ -66,6 +66,31 @@ export default defineContentScript({
 			}
 		};
 
+		const locationChangeEvent = "ai-chat-project-exporter:locationchange";
+		const historyState = window.history as History & {
+			__aiChatProjectExporterLocationPatched?: boolean;
+		};
+		if (!historyState.__aiChatProjectExporterLocationPatched) {
+			historyState.__aiChatProjectExporterLocationPatched = true;
+			const notifyLocationChange = () => {
+				window.dispatchEvent(new Event(locationChangeEvent));
+			};
+			const originalPushState = window.history.pushState.bind(window.history);
+			window.history.pushState = ((...args) => {
+				const result = originalPushState(...args);
+				notifyLocationChange();
+				return result;
+			}) as History["pushState"];
+			const originalReplaceState = window.history.replaceState.bind(
+				window.history,
+			);
+			window.history.replaceState = ((...args) => {
+				const result = originalReplaceState(...args);
+				notifyLocationChange();
+				return result;
+			}) as History["replaceState"];
+		}
+
 		const queueRefresh = () => {
 			if (refreshQueued) return;
 			refreshQueued = true;
@@ -77,14 +102,8 @@ export default defineContentScript({
 		};
 		window.addEventListener("popstate", queueRefresh);
 		window.addEventListener("hashchange", queueRefresh);
+		window.addEventListener(locationChangeEvent, queueRefresh);
 		document.addEventListener("readystatechange", queueRefresh);
-		const mountObserver = new MutationObserver(() => {
-			if (!mounted) queueRefresh();
-		});
-		mountObserver.observe(document.documentElement, {
-			childList: true,
-			subtree: true,
-		});
 		chatGptVirtualScroll.refresh();
 		void mountIfNeeded();
 		void browser.runtime
@@ -136,7 +155,9 @@ export default defineContentScript({
 							return;
 						}
 						if (message.type === "SET_FLOATING_VISIBILITY") {
-							sendResponse(await setFloatingButtonVisible(message.value));
+							const context = await setFloatingButtonVisible(message.value);
+							if (message.value) await mountIfNeeded(true);
+							sendResponse(context);
 							return;
 						}
 						if (message.type === "GET_RENDERED_CHAT") {
@@ -207,7 +228,6 @@ export default defineContentScript({
 		window.addEventListener(
 			"beforeunload",
 			() => {
-				mountObserver.disconnect();
 				chatGptVirtualScroll.destroy();
 			},
 			{
