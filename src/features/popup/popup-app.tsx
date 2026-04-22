@@ -2,16 +2,19 @@ import React from "react";
 import { browser } from "wxt/browser";
 import { ActionPanel } from "../shared/action-panel";
 import {
+	CHATGPT_VIRTUAL_SCROLL_KEY,
 	DEFAULT_EXPORT_FORMAT,
 	INCLUDE_DOCUMENTS_CANVAS_KEY,
 	THEME_MODE_KEY,
 } from "../../lib/constants";
 import { inferPageKind, inferProvider } from "../../lib/page-context";
 import {
+	getChatGptVirtualScrollEnabled,
 	getIncludeDocumentsCanvas,
 	getPreferredExportFormat,
 	getShowFloatingButton,
 	getThemeMode,
+	setChatGptVirtualScrollEnabled,
 	setIncludeDocumentsCanvas,
 	setPreferredExportFormat,
 	setShowFloatingButton,
@@ -29,6 +32,7 @@ import type {
 const FORMAT_KEY = "preferredExportFormat";
 const FLOATING_KEY = "showFloatingExportButton";
 const INCLUDE_DOCUMENTS_CANVAS_LOCAL_KEY = "includeDocumentsCanvas";
+const CHATGPT_VIRTUAL_SCROLL_LOCAL_KEY = "chatgptVirtualScroll";
 
 function initialFormat(): ExportFormat {
 	if (typeof localStorage === "undefined") return DEFAULT_EXPORT_FORMAT;
@@ -37,7 +41,7 @@ function initialFormat(): ExportFormat {
 
 function initialFloating(): boolean {
 	if (typeof localStorage === "undefined") return true;
-	return localStorage.getItem(FLOATING_KEY) !== "false";
+	return localStorage.getItem(FLOATING_KEY) === "true";
 }
 
 function initialTheme(): ThemeMode {
@@ -50,6 +54,11 @@ function initialIncludeDocumentsCanvas(): boolean {
 	return localStorage.getItem(INCLUDE_DOCUMENTS_CANVAS_LOCAL_KEY) !== "false";
 }
 
+function initialChatGptVirtualScrollEnabled(): boolean {
+	if (typeof localStorage === "undefined") return false;
+	return localStorage.getItem(CHATGPT_VIRTUAL_SCROLL_LOCAL_KEY) === "true";
+}
+
 export function PopupApp() {
 	const [format, setFormatState] = React.useState<ExportFormat>(initialFormat);
 	const [pageKind, setPageKind] = React.useState<PageKind>("unknown");
@@ -58,6 +67,8 @@ export function PopupApp() {
 	const [themeMode, setThemeState] = React.useState<ThemeMode>(initialTheme);
 	const [includeDocumentsCanvas, setIncludeDocumentsCanvasState] =
 		React.useState<boolean>(initialIncludeDocumentsCanvas);
+	const [chatGptVirtualScrollEnabled, setChatGptVirtualScrollEnabledState] =
+		React.useState<boolean>(initialChatGptVirtualScrollEnabled);
 	const [provider, setProvider] = React.useState<ProviderName | null>(null);
 	const [activeTabId, setActiveTabId] = React.useState<number | null>(null);
 	const [error, setError] = React.useState<string>("");
@@ -117,16 +128,19 @@ export function PopupApp() {
 					storedFloating,
 					storedTheme,
 					storedIncludeDocumentsCanvas,
+					storedChatGptVirtualScrollEnabled,
 				] = await Promise.all([
 					getPreferredExportFormat(),
 					getShowFloatingButton(),
 					getThemeMode(),
 					getIncludeDocumentsCanvas(),
+					getChatGptVirtualScrollEnabled(),
 				]);
 				setFormatState(storedFormat);
 				setShowFloatingState(storedFloating);
 				setThemeState(storedTheme);
 				setIncludeDocumentsCanvasState(storedIncludeDocumentsCanvas);
+				setChatGptVirtualScrollEnabledState(storedChatGptVirtualScrollEnabled);
 				if (typeof localStorage !== "undefined") {
 					localStorage.setItem(FORMAT_KEY, storedFormat);
 					localStorage.setItem(FLOATING_KEY, storedFloating ? "true" : "false");
@@ -134,6 +148,10 @@ export function PopupApp() {
 					localStorage.setItem(
 						INCLUDE_DOCUMENTS_CANVAS_LOCAL_KEY,
 						storedIncludeDocumentsCanvas ? "true" : "false",
+					);
+					localStorage.setItem(
+						CHATGPT_VIRTUAL_SCROLL_LOCAL_KEY,
+						storedChatGptVirtualScrollEnabled ? "true" : "false",
 					);
 				}
 			} catch {
@@ -186,14 +204,25 @@ export function PopupApp() {
 			}
 			const includeDocumentsCanvasChange =
 				changes[INCLUDE_DOCUMENTS_CANVAS_KEY];
-			if (!includeDocumentsCanvasChange) return;
-			const nextIncludeDocumentsCanvas =
-				includeDocumentsCanvasChange.newValue !== false;
-			setIncludeDocumentsCanvasState(nextIncludeDocumentsCanvas);
+			if (includeDocumentsCanvasChange) {
+				const nextIncludeDocumentsCanvas =
+					includeDocumentsCanvasChange.newValue !== false;
+				setIncludeDocumentsCanvasState(nextIncludeDocumentsCanvas);
+				if (typeof localStorage !== "undefined") {
+					localStorage.setItem(
+						INCLUDE_DOCUMENTS_CANVAS_LOCAL_KEY,
+						nextIncludeDocumentsCanvas ? "true" : "false",
+					);
+				}
+			}
+			const virtualScrollChange = changes[CHATGPT_VIRTUAL_SCROLL_KEY];
+			if (!virtualScrollChange) return;
+			const nextVirtualScrollEnabled = virtualScrollChange.newValue === true;
+			setChatGptVirtualScrollEnabledState(nextVirtualScrollEnabled);
 			if (typeof localStorage !== "undefined") {
 				localStorage.setItem(
-					INCLUDE_DOCUMENTS_CANVAS_LOCAL_KEY,
-					nextIncludeDocumentsCanvas ? "true" : "false",
+					CHATGPT_VIRTUAL_SCROLL_LOCAL_KEY,
+					nextVirtualScrollEnabled ? "true" : "false",
 				);
 			}
 		};
@@ -319,6 +348,17 @@ export function PopupApp() {
 			);
 		}
 		void setIncludeDocumentsCanvas(next).catch(() => undefined);
+	}, []);
+
+	const toggleChatGptVirtualScroll = React.useCallback((next: boolean) => {
+		setChatGptVirtualScrollEnabledState(next);
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem(
+				CHATGPT_VIRTUAL_SCROLL_LOCAL_KEY,
+				next ? "true" : "false",
+			);
+		}
+		void setChatGptVirtualScrollEnabled(next).catch(() => undefined);
 	}, []);
 
 	const runChatAction = React.useCallback(
@@ -500,8 +540,10 @@ export function PopupApp() {
 					onToggleFloating={toggleFloating}
 					onToggleTheme={toggleTheme}
 					onToggleIncludeDocumentsCanvas={toggleIncludeDocumentsCanvas}
+					onToggleExperimentalVirtualScroll={toggleChatGptVirtualScroll}
 					showFloatingButton={showFloatingButton}
 					includeDocumentsCanvas={includeDocumentsCanvas}
+					experimentalVirtualScrollEnabled={chatGptVirtualScrollEnabled}
 					statusText={visibleStatus || undefined}
 					canSkipProjectExport={canSkipProjectExport}
 					onSkipProjectExport={

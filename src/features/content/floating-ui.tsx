@@ -163,7 +163,7 @@ function FloatingApp(props: {
 		hasConversation: false,
 		hasProject: false,
 		waiting: false,
-		showFloatingButton: true,
+		showFloatingButton: false,
 		projectExportStatus: null,
 		projectExportCanSkip: false,
 	});

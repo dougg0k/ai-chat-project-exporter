@@ -15,6 +15,7 @@ import {
 	requestProjectExportSkip,
 } from "../features/content/controller";
 import { mountFloatingUi } from "../features/content/floating-ui";
+import { initializeChatGptVirtualScroll } from "../features/content/chatgpt-virtual-scroll";
 import { subscribeUiContext } from "../features/content/controller";
 import type { RuntimeMessage } from "../lib/types";
 
@@ -22,6 +23,7 @@ export default defineContentScript({
 	matches: [...CONTENT_MATCHES],
 	runAt: "document_start",
 	main() {
+		const chatGptVirtualScroll = initializeChatGptVirtualScroll();
 		let mounted = false;
 		let floatingUi: ReturnType<typeof mountFloatingUi> | null = null;
 		const initPromise = initializeController();
@@ -69,6 +71,7 @@ export default defineContentScript({
 			refreshQueued = true;
 			queueMicrotask(() => {
 				refreshQueued = false;
+				chatGptVirtualScroll.refresh();
 				void mountIfNeeded();
 			});
 		};
@@ -82,6 +85,7 @@ export default defineContentScript({
 			childList: true,
 			subtree: true,
 		});
+		chatGptVirtualScroll.refresh();
 		void mountIfNeeded();
 		void browser.runtime
 			.sendMessage({
@@ -200,8 +204,15 @@ export default defineContentScript({
 			},
 		);
 
-		window.addEventListener("beforeunload", () => mountObserver.disconnect(), {
-			once: true,
-		});
+		window.addEventListener(
+			"beforeunload",
+			() => {
+				mountObserver.disconnect();
+				chatGptVirtualScroll.destroy();
+			},
+			{
+				once: true,
+			},
+		);
 	},
 });

@@ -70,7 +70,7 @@ const chatGptConversationReadyWaiters = new Set<{
 	resolve: () => void;
 }>();
 let initialized = false;
-let showFloatingButton = true;
+let showFloatingButton = false;
 let lastPageUrl = "";
 let projectExportStatus: string | null = null;
 let projectExportCanSkip = false;
@@ -963,7 +963,7 @@ export async function initializeController(): Promise<void> {
 		},
 	);
 
-	showFloatingButton = await getShowFloatingButton().catch(() => true);
+	showFloatingButton = await getShowFloatingButton().catch(() => false);
 	lastClaudeOrgId = await getLastClaudeOrgId().catch(() => null);
 	const observedOrgId = extractClaudeOrgIdFromUrl(
 		collectObservedApiUrls().find(

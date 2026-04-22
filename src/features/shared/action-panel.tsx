@@ -15,9 +15,11 @@ export interface ActionPanelProps {
 	onToggleFloating?: (value: boolean) => void;
 	onToggleTheme?: (value: ThemeMode) => void;
 	onToggleIncludeDocumentsCanvas?: (value: boolean) => void;
+	onToggleExperimentalVirtualScroll?: (value: boolean) => void;
 	onSkipProjectExport?: () => void;
 	showFloatingButton?: boolean;
 	includeDocumentsCanvas?: boolean;
+	experimentalVirtualScrollEnabled?: boolean;
 	disabled?: boolean;
 	compact?: boolean;
 	statusText?: string;
@@ -135,7 +137,8 @@ export function ActionPanel(props: ActionPanelProps) {
 
 			{(props.onToggleFloating ||
 				props.onToggleTheme ||
-				props.onToggleIncludeDocumentsCanvas) && (
+				props.onToggleIncludeDocumentsCanvas ||
+				props.onToggleExperimentalVirtualScroll) && (
 				<div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
 					{props.onToggleFloating && (
 						<ToggleRow theme={props.theme}>
@@ -172,6 +175,19 @@ export function ActionPanel(props: ActionPanelProps) {
 								style={{ accentColor: props.theme.accent }}
 							/>
 							<span>Include Documents / Canvas</span>
+						</ToggleRow>
+					)}
+					{props.onToggleExperimentalVirtualScroll && (
+						<ToggleRow theme={props.theme}>
+							<input
+								type="checkbox"
+								checked={props.experimentalVirtualScrollEnabled === true}
+								onChange={(e) =>
+									props.onToggleExperimentalVirtualScroll?.(e.target.checked)
+								}
+								style={{ accentColor: props.theme.accent }}
+							/>
+							<span>Experimental: ChatGPT virtual scroll</span>
 						</ToggleRow>
 					)}
 				</div>
