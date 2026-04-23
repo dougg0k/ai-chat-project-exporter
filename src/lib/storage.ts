@@ -1,6 +1,5 @@
 import { browser } from "wxt/browser";
 import {
-	CHATGPT_VIRTUAL_SCROLL_KEY,
 	CLAUDE_ORG_ID_KEY,
 	DEFAULT_EXPORT_FORMAT,
 	EXPORT_FORMAT_KEY,
@@ -75,19 +74,6 @@ export async function getIncludeDocumentsCanvas(): Promise<boolean> {
 
 export async function setIncludeDocumentsCanvas(value: boolean): Promise<void> {
 	await browser.storage.local.set({ [INCLUDE_DOCUMENTS_CANVAS_KEY]: value });
-}
-
-export async function getChatGptVirtualScrollEnabled(): Promise<boolean> {
-	const result = await browser.storage.local.get(CHATGPT_VIRTUAL_SCROLL_KEY);
-	return result[CHATGPT_VIRTUAL_SCROLL_KEY] === true;
-}
-
-export async function setChatGptVirtualScrollEnabled(
-	value: boolean,
-): Promise<void> {
-	await browser.storage.local.set({
-		[CHATGPT_VIRTUAL_SCROLL_KEY]: value === true,
-	});
 }
 
 export async function getThemeMode(): Promise<ThemeMode> {

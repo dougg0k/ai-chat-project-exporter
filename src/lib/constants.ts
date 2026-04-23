@@ -5,7 +5,6 @@ export const EXPORT_FORMAT_KEY = "preferredExportFormat";
 export const DEFAULT_EXPORT_FORMAT = "markdown";
 export const INCLUDE_DOCUMENTS_CANVAS_KEY = "includeDocumentsCanvas";
 export const THEME_MODE_KEY = "themeMode";
-export const CHATGPT_VIRTUAL_SCROLL_KEY = "chatgptVirtualScroll";
 export const CLAUDE_ORG_ID_KEY = "lastClaudeOrgId";
 export const PROVIDERS_URI_PATTERNS = [
 	"chatgpt.com/backend-api/conversation/",
