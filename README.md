@@ -42,6 +42,11 @@ The extension only stores local configuration needed for usability.
 - Claude (incl projects)
 - Gemini (not supported)
 
+## Mentions
+
+- Ideally, the AI chats should provide a quick way to export a single chat or projects rather than only the current option. To not need an browser extension.
+- If this is not allowed, they can contact me at <dougg0k@gmail.com>, and request removal of the extension and repository.
+
 ---
 
 ## Not planned
