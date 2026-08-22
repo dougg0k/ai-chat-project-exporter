@@ -50,21 +50,6 @@ export function prepareConversationExport(
 	);
 	const usedPaths = new Set<string>();
 	const canvases: CanvasAsset[] = [];
-	const chatGptCanvasAssets = includeDocumentsCanvas
-		? materializeChatGptTextdocs(
-				conversation,
-				format,
-				chatFolder,
-				usedPaths,
-				nestAssetsUnderChatFolder,
-			)
-		: [];
-	const chatGptCanvasResolver =
-		conversation.provider === "chatgpt"
-			? buildChatGptCanvasResolver(chatGptCanvasAssets)
-			: undefined;
-	canvases.push(...chatGptCanvasAssets);
-
 	const messages = conversation.messages.map((message) =>
 		transformMessage(
 			message,
@@ -73,7 +58,6 @@ export function prepareConversationExport(
 			usedPaths,
 			canvases,
 			nestAssetsUnderChatFolder,
-			chatGptCanvasResolver,
 			includeDocumentsCanvas,
 		),
 	);
@@ -111,7 +95,6 @@ function transformMessage(
 	usedPaths: Set<string>,
 	canvases: CanvasAsset[],
 	nestAssetsUnderChatFolder: boolean,
-	chatGptCanvasResolver: Map<string, CanvasAsset> | undefined,
 	includeDocumentsCanvas: boolean,
 ): Message {
 	if (message.role !== "assistant") return message;
@@ -130,34 +113,7 @@ function transformMessage(
 		};
 	}
 
-	let artifact: CanvasAsset | null = null;
-	if (chatGptCanvasResolver) {
-		artifact = resolveChatGptCanvasArtifact(
-			parsed.payload,
-			parsed.prefix,
-			chatGptCanvasResolver,
-		);
-		const suffix = parsed.suffix.trim();
-		if (!artifact) {
-			const prefixOnly = normalizeVisiblePrefix(
-				parsed.prefix,
-				inferTitleFromPrefix(parsed.prefix) || "Canvas",
-			);
-			return {
-				...message,
-				markdown: [prefixOnly, suffix].filter(Boolean).join("\n\n").trim(),
-			};
-		}
-		const replacement =
-			format === "html"
-				? (artifact.embeddedMarkdown ?? "")
-				: `[${artifact.title}](${artifact.linkRelativePath})`;
-		const prefix = normalizeVisiblePrefix(parsed.prefix, artifact.title);
-		const parts = [prefix, replacement, suffix].filter(Boolean);
-		return { ...message, markdown: parts.join("\n\n").trim() };
-	}
-
-	artifact = materializeCanvas(
+	const artifact = materializeCanvas(
 		parsed.payload,
 		parsed.prefix,
 		message.id,
@@ -250,68 +206,6 @@ function materializeCanvas(
 	}
 
 	return null;
-}
-
-function materializeChatGptTextdocs(
-	conversation: Conversation,
-	format: ExportFormat,
-	chatFolder: string,
-	usedPaths: Set<string>,
-	nestAssetsUnderChatFolder: boolean,
-): CanvasAsset[] {
-	if (conversation.provider !== "chatgpt") return [];
-	const textdocs = conversation.chatGptTextdocs ?? [];
-	if (textdocs.length === 0) return [];
-	return textdocs
-		.map((textdoc) => {
-			const markdown = cleanVisibleMarkdown(textdoc.content || "");
-			if (!markdown.trim()) return null;
-			return buildAsset({
-				kind: "canvas",
-				title: textdoc.title || "Untitled-Canvas",
-				markdown,
-				messageId: textdoc.id,
-				chatFolder,
-				usedPaths,
-				format,
-				nestAssetsUnderChatFolder,
-				folderName: "canvas",
-				label: "Canvas",
-			});
-		})
-		.filter(Boolean) as CanvasAsset[];
-}
-
-function buildChatGptCanvasResolver(
-	assets: CanvasAsset[],
-): Map<string, CanvasAsset> {
-	const resolver = new Map<string, CanvasAsset>();
-	for (const asset of assets) {
-		resolver.set(normalizeCanvasLookupKey(asset.title), asset);
-	}
-	return resolver;
-}
-
-function resolveChatGptCanvasArtifact(
-	payload: any,
-	prefix: string,
-	resolver: Map<string, CanvasAsset>,
-): CanvasAsset | null {
-	const candidates = [
-		typeof payload?.name === "string" ? payload.name : "",
-		inferTitleFromPrefix(prefix) ?? "",
-	];
-	for (const candidate of candidates) {
-		const key = normalizeCanvasLookupKey(candidate);
-		if (!key) continue;
-		const asset = resolver.get(key);
-		if (asset) return asset;
-	}
-	return null;
-}
-
-function normalizeCanvasLookupKey(value: string): string {
-	return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function materializeGeneratedDocuments(

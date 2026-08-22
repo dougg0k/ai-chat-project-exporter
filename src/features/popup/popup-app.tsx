@@ -146,15 +146,7 @@ export function PopupApp() {
 		void refreshContext();
 	}, [refreshContext]);
 
-	const isDocumentsCanvasOnlyWait = React.useMemo(
-		() => status.startsWith("Documents / canvas are still loading"),
-		[status],
-	);
-
-	const actionDisabled =
-		loadingSelection ||
-		busy ||
-		(waiting && (includeDocumentsCanvas || !isDocumentsCanvasOnlyWait));
+	const actionDisabled = loadingSelection || busy || waiting;
 	const visibleStatus = status || operationStatus;
 
 	React.useEffect(() => {
@@ -500,7 +492,9 @@ export function PopupApp() {
 					}
 					onToggleFloating={toggleFloating}
 					onToggleTheme={toggleTheme}
-					onToggleIncludeDocumentsCanvas={toggleIncludeDocumentsCanvas}
+					onToggleIncludeDocumentsCanvas={
+						provider === "claude" ? toggleIncludeDocumentsCanvas : undefined
+					}
 					showFloatingButton={showFloatingButton}
 					includeDocumentsCanvas={includeDocumentsCanvas}
 					statusText={visibleStatus || undefined}

@@ -7,6 +7,7 @@ export const INCLUDE_DOCUMENTS_CANVAS_KEY = "includeDocumentsCanvas";
 export const THEME_MODE_KEY = "themeMode";
 export const CLAUDE_ORG_ID_KEY = "lastClaudeOrgId";
 export const PROVIDERS_URI_PATTERNS = [
+	"chatgpt.com/backend-api/conversations/",
 	"chatgpt.com/backend-api/conversation/",
 	"chatgpt.com/backend-api/gizmos/",
 	"chat_conversations/",

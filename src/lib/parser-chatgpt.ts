@@ -1,7 +1,11 @@
 import { cleanVisibleMarkdown } from "./clean-text";
 import { unwrapRecordedOrDirectJson } from "./recorded";
+import {
+	extractChatGptConversationIdFromApiUrl,
+	getChatGptConversationApiKind,
+	isChatGptConversationUrl,
+} from "./provider-url";
 import type {
-	ChatGptTextdoc,
 	Conversation,
 	Message,
 	ProjectChatRef,
@@ -268,18 +272,21 @@ function extractTextContent(raw: any): string {
 	return cleanVisibleMarkdown(enriched);
 }
 
-export function parseChatGptConversation(
-	url: string,
-	text: string,
-	sourceUrl: string,
-): Conversation | null {
-	if (!url.includes("chatgpt.com/backend-api/conversation/")) return null;
-	const data = unwrapRecordedOrDirectJson(text);
-	if (!data?.mapping) return null;
+export interface ChatGptConversationPage {
+	conversationId: string;
+	title?: string;
+	sourceApiUrl: string;
+	rawMessages: any[];
+	pageInfo: {
+		startCursor: string | null;
+		hasPreviousPage: boolean;
+		hasNextPage: boolean;
+	};
+}
 
+function parseVisibleChatGptMessages(rawMessages: any[]): Message[] {
 	const messages: Message[] = [];
-	for (const node of orderedMappingNodes(data.mapping)) {
-		const raw = node?.message;
+	for (const raw of rawMessages) {
 		if (!raw) continue;
 		if (raw?.metadata?.is_visually_hidden_from_conversation) continue;
 		const role = raw?.author?.role;
@@ -295,20 +302,150 @@ export function parseChatGptConversation(
 				: undefined,
 		});
 	}
+	return messages;
+}
 
-	if (messages.length === 0) return null;
+function parseChatGptConversationPageData(
+	url: string,
+	data: any,
+): ChatGptConversationPage | null {
+	const kind = getChatGptConversationApiKind(url);
+	if (kind !== "initial" && kind !== "messages") return null;
+	if (!Array.isArray(data?.messages)) return null;
+	if (!data?.page_info || typeof data.page_info !== "object") return null;
+	if (typeof data.page_info.has_previous_page !== "boolean") return null;
+	if (typeof data.page_info.has_next_page !== "boolean") return null;
+
+	const urlConversationId = extractChatGptConversationIdFromApiUrl(url);
+	const dataConversationId =
+		typeof data.conversation_id === "string" && data.conversation_id.trim()
+			? data.conversation_id.trim()
+			: null;
+	if (!urlConversationId && !dataConversationId) return null;
+	if (
+		urlConversationId &&
+		dataConversationId &&
+		urlConversationId !== dataConversationId
+	) {
+		return null;
+	}
 
 	return {
-		id: data.id ?? crypto.randomUUID(),
-		provider: "chatgpt",
+		conversationId: dataConversationId ?? urlConversationId ?? "",
 		title:
 			typeof data.title === "string" && data.title.trim()
 				? data.title.trim()
-				: "Untitled-Chat",
+				: undefined,
+		sourceApiUrl: url,
+		rawMessages: data.messages,
+		pageInfo: {
+			startCursor:
+				typeof data.page_info.start_cursor === "string" &&
+				data.page_info.start_cursor.trim()
+					? data.page_info.start_cursor
+					: null,
+			hasPreviousPage: data.page_info.has_previous_page,
+			hasNextPage: data.page_info.has_next_page,
+		},
+	};
+}
+
+export function parseChatGptConversationPage(
+	url: string,
+	text: string,
+): ChatGptConversationPage | null {
+	if (!isChatGptConversationUrl(url)) return null;
+	const data = unwrapRecordedOrDirectJson(text);
+	return parseChatGptConversationPageData(url, data);
+}
+
+export function buildChatGptConversationFromPages(
+	pagesOldestToNewest: ChatGptConversationPage[],
+	sourceUrl: string,
+): Conversation | null {
+	const firstPage = pagesOldestToNewest[0];
+	if (!firstPage) return null;
+	const conversationId = firstPage.conversationId;
+	if (
+		!conversationId ||
+		pagesOldestToNewest.some((page) => page.conversationId !== conversationId)
+	) {
+		return null;
+	}
+
+	const rawMessages: any[] = [];
+	const rawIndexById = new Map<string, number>();
+	for (const page of pagesOldestToNewest) {
+		for (const raw of page.rawMessages) {
+			if (!raw) continue;
+			const id = typeof raw.id === "string" && raw.id.trim() ? raw.id : null;
+			if (!id) {
+				rawMessages.push(raw);
+				continue;
+			}
+			const existingIndex = rawIndexById.get(id);
+			if (existingIndex == null) {
+				rawIndexById.set(id, rawMessages.length);
+				rawMessages.push(raw);
+			} else {
+				rawMessages[existingIndex] = raw;
+			}
+		}
+	}
+	const messages = parseVisibleChatGptMessages(rawMessages);
+	if (messages.length === 0) return null;
+
+	const title = [...pagesOldestToNewest]
+		.reverse()
+		.find((page) => page.title?.trim())?.title;
+
+	return {
+		id: conversationId,
+		provider: "chatgpt",
+		title: title ?? "Untitled-Chat",
 		sourceUrl,
 		exportedAt: new Date().toISOString(),
 		messages,
 	};
+}
+
+export function parseChatGptConversation(
+	url: string,
+	text: string,
+	sourceUrl: string,
+): Conversation | null {
+	if (!isChatGptConversationUrl(url)) return null;
+	const data = unwrapRecordedOrDirectJson(text);
+
+	if (data?.mapping && typeof data.mapping === "object") {
+		const rawMessages = orderedMappingNodes(data.mapping)
+			.map((node) => node?.message)
+			.filter(Boolean);
+		const messages = parseVisibleChatGptMessages(rawMessages);
+		if (messages.length === 0) return null;
+
+		return {
+			id: data.id ?? crypto.randomUUID(),
+			provider: "chatgpt",
+			title:
+				typeof data.title === "string" && data.title.trim()
+					? data.title.trim()
+					: "Untitled-Chat",
+			sourceUrl,
+			exportedAt: new Date().toISOString(),
+			messages,
+		};
+	}
+
+	const page = parseChatGptConversationPageData(url, data);
+	if (
+		getChatGptConversationApiKind(url) !== "initial" ||
+		!page ||
+		page.pageInfo.hasPreviousPage ||
+		page.pageInfo.hasNextPage
+	)
+		return null;
+	return buildChatGptConversationFromPages([page], sourceUrl);
 }
 
 export function parseChatGptProject(
@@ -355,84 +492,4 @@ export function parseChatGptProject(
 					? null
 					: undefined,
 	};
-}
-
-export function parseChatGptTextdocs(
-	url: string,
-	text: string,
-): { conversationId: string; textdocs: ChatGptTextdoc[] } | null {
-	const match = url.match(
-		/^https:\/\/chatgpt\.com\/backend-api\/conversation\/([A-Za-z0-9-]+)\/textdocs(?:\?.*)?$/,
-	);
-	if (!match) return null;
-	const data = unwrapRecordedOrDirectJson(text);
-	if (!Array.isArray(data)) return { conversationId: match[1], textdocs: [] };
-
-	const textdocs = data
-		.filter((item: any) => item && typeof item === "object")
-		.map((item: any): ChatGptTextdoc | null => {
-			const id = typeof item.id === "string" ? item.id : null;
-			const content = typeof item.content === "string" ? item.content : null;
-			if (!id || !content) return null;
-			const title =
-				typeof item.title === "string" && item.title.trim()
-					? item.title.trim()
-					: "Untitled-Canvas";
-			const version =
-				typeof item.version === "number" && Number.isFinite(item.version)
-					? item.version
-					: Number(item.version ?? 0) || 0;
-			return {
-				id,
-				title,
-				content,
-				version,
-				updatedAt:
-					typeof item.updated_at === "string"
-						? item.updated_at
-						: typeof item.updatedAt === "string"
-							? item.updatedAt
-							: undefined,
-				textdocType:
-					typeof item.textdoc_type === "string"
-						? item.textdoc_type
-						: typeof item.textdocType === "string"
-							? item.textdocType
-							: undefined,
-			};
-		})
-		.filter(Boolean) as ChatGptTextdoc[];
-
-	return { conversationId: match[1], textdocs };
-}
-
-export function mergeChatGptTextdocs(
-	current: ChatGptTextdoc[] | undefined,
-	incoming: ChatGptTextdoc[] | undefined,
-): ChatGptTextdoc[] | undefined {
-	if (!incoming || incoming.length === 0) return current;
-	if (!current || current.length === 0) return [...incoming];
-	const merged = new Map<string, ChatGptTextdoc>();
-	for (const item of current) merged.set(item.id, item);
-	for (const item of incoming) {
-		const existing = merged.get(item.id);
-		if (!existing) {
-			merged.set(item.id, item);
-			continue;
-		}
-		if (item.version > existing.version) {
-			merged.set(item.id, item);
-			continue;
-		}
-		if (item.version < existing.version) continue;
-		const existingTime = Date.parse(existing.updatedAt ?? "");
-		const itemTime = Date.parse(item.updatedAt ?? "");
-		if (
-			(Number.isFinite(itemTime) ? itemTime : -Infinity) >
-			(Number.isFinite(existingTime) ? existingTime : -Infinity)
-		) {
-			merged.set(item.id, item);
-		}
-	}
-	return [...merged.values()];
 }

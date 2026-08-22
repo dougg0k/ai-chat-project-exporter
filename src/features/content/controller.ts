@@ -2,9 +2,9 @@ import JSZip from "jszip";
 import { browser } from "wxt/browser";
 import { buildConversationBundle } from "../../lib/canvas-export";
 import { filterConversationToMessageIds } from "../../lib/chat-selection";
-import { replaceConversationTextdocs } from "../../lib/chatgpt-textdocs";
 import { cleanVisibleMarkdown } from "../../lib/clean-text";
 import {
+	chatGptPageFetch,
 	collectObservedApiUrls,
 	initFetchBridge,
 	onRawCapture,
@@ -19,7 +19,6 @@ import {
 	saveTextAsFile,
 } from "../../lib/file";
 import {
-	buildChatGptCurrentConversationApiUrl,
 	buildClaudeCurrentConversationApiUrl,
 	buildCurrentProjectListingUrl,
 	extractClaudeOrgIdFromUrl,
@@ -30,9 +29,14 @@ import {
 } from "../../lib/page-context";
 import { parseConversation, parseProjectListing } from "../../lib/parser";
 import {
-	mergeChatGptTextdocs,
-	parseChatGptTextdocs,
+	buildChatGptConversationFromPages,
+	parseChatGptConversationPage,
+	type ChatGptConversationPage,
 } from "../../lib/parser-chatgpt";
+import {
+	extractChatGptConversationBeforeCursorFromApiUrl,
+	getChatGptConversationApiKind,
+} from "../../lib/provider-url";
 import {
 	buildChatGptProjectListingUrl,
 	mergeProjectListings,
@@ -58,17 +62,12 @@ import type {
 } from "../../lib/types";
 
 let latestConversation: Conversation | null = null;
-let latestProject: ProjectListing | null = null;
-const chatGptTextdocsByConversation = new Map<
+let latestChatGptInitialPage: ChatGptConversationPage | null = null;
+const chatGptHistoryPagesByBeforeCursor = new Map<
 	string,
-	import("../../lib/types").ChatGptTextdoc[]
+	ChatGptConversationPage
 >();
-const observedChatGptConversationApis = new Set<string>();
-const observedChatGptTextdocs = new Set<string>();
-const chatGptConversationReadyWaiters = new Set<{
-	conversationId: string;
-	resolve: () => void;
-}>();
+let latestProject: ProjectListing | null = null;
 let initialized = false;
 let showFloatingButton = false;
 let lastPageUrl = "";
@@ -76,8 +75,9 @@ let projectExportStatus: string | null = null;
 let projectExportCanSkip = false;
 let lastClaudeOrgId: string | null = null;
 const uiContextListeners = new Set<(context: UiContext) => void>();
-const CHATGPT_TEXTDOCS_WAIT_FALLBACK_MS = 15000;
-const chatGptTextdocsWaitStartedAt = new Map<string, number>();
+const CHAT_CONTENT_WAIT_TIMEOUT_MS = 20_000;
+const chatContentWaitStartedAt = new Map<string, number>();
+const chatContentWaitTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function currentUrl(): string {
 	return window.location.href;
@@ -485,48 +485,230 @@ async function maybeEnrichClaudeConversationWithGeneratedDocuments(
 	return { ...conversation, generatedDocuments };
 }
 
+function getChatGptInitialPageForPage(
+	pageUrl = currentUrl(),
+): ChatGptConversationPage | null {
+	const currentChatId = extractCurrentChatId(pageUrl);
+	if (!currentChatId) return null;
+	if (latestChatGptInitialPage?.conversationId !== currentChatId) return null;
+	return latestChatGptInitialPage;
+}
+
+type CapturedChatGptConversationState =
+	| { kind: "complete"; conversation: Conversation }
+	| { kind: "missing-initial" }
+	| { kind: "missing-history"; beforeCursor: string }
+	| { kind: "invalid"; error: string };
+
+function buildCompleteCapturedChatGptConversation(
+	pageUrl: string,
+): CapturedChatGptConversationState {
+	const conversationId = extractCurrentChatId(pageUrl);
+	if (!conversationId) {
+		return { kind: "invalid", error: "Missing ChatGPT conversation id." };
+	}
+	const initialPage = getChatGptInitialPageForPage(pageUrl);
+	if (!initialPage) return { kind: "missing-initial" };
+	if (initialPage.conversationId !== conversationId) {
+		return {
+			kind: "invalid",
+			error: "ChatGPT returned conversation data for a different chat.",
+		};
+	}
+	if (initialPage.pageInfo.hasNextPage) {
+		return {
+			kind: "invalid",
+			error:
+				"ChatGPT returned an initial conversation page that is not the newest page.",
+		};
+	}
+
+	const pagesOldestToNewest: ChatGptConversationPage[] = [initialPage];
+	const seenBeforeCursors = new Set<string>();
+	let oldestPage = initialPage;
+
+	while (oldestPage.pageInfo.hasPreviousPage) {
+		const cursor = oldestPage.pageInfo.startCursor;
+		if (!cursor) {
+			return {
+				kind: "invalid",
+				error:
+					"ChatGPT reports older chat history but did not provide a previous-page cursor.",
+			};
+		}
+		if (seenBeforeCursors.has(cursor)) {
+			return {
+				kind: "invalid",
+				error: "ChatGPT repeated the same chat history cursor.",
+			};
+		}
+		seenBeforeCursors.add(cursor);
+
+		const olderPage = chatGptHistoryPagesByBeforeCursor.get(cursor);
+		if (!olderPage) {
+			return { kind: "missing-history", beforeCursor: cursor };
+		}
+		if (olderPage.conversationId !== conversationId) {
+			return {
+				kind: "invalid",
+				error: "ChatGPT returned history data for a different chat.",
+			};
+		}
+		pagesOldestToNewest.unshift(olderPage);
+		oldestPage = olderPage;
+	}
+
+	const conversation = buildChatGptConversationFromPages(
+		pagesOldestToNewest,
+		pageUrl,
+	);
+	if (!conversation) {
+		return {
+			kind: "invalid",
+			error: "ChatGPT conversation data could not be converted for export.",
+		};
+	}
+	return { kind: "complete", conversation };
+}
+
+function storeChatGptInitialPage(
+	page: ChatGptConversationPage,
+	pageUrl: string,
+): Conversation | null {
+	const expectedChatId = extractCurrentChatId(pageUrl);
+	if (expectedChatId && page.conversationId !== expectedChatId) return null;
+
+	const existing = getChatGptInitialPageForPage(pageUrl);
+	const sameStartCursor =
+		existing?.conversationId === page.conversationId &&
+		existing.pageInfo.startCursor === page.pageInfo.startCursor;
+	latestChatGptInitialPage = page;
+	latestConversation = null;
+	if (!sameStartCursor) chatGptHistoryPagesByBeforeCursor.clear();
+	clearChatContentWait(page.conversationId);
+
+	const state = buildCompleteCapturedChatGptConversation(pageUrl);
+	if (state.kind !== "complete") return null;
+	latestConversation = state.conversation;
+	return state.conversation;
+}
+
+function storeChatGptHistoryPage(
+	page: ChatGptConversationPage,
+	apiUrl: string,
+	pageUrl: string,
+): Conversation | null {
+	const expectedChatId = extractCurrentChatId(pageUrl);
+	if (expectedChatId && page.conversationId !== expectedChatId) return null;
+	const beforeCursor = extractChatGptConversationBeforeCursorFromApiUrl(apiUrl);
+	if (!beforeCursor) return null;
+	chatGptHistoryPagesByBeforeCursor.set(beforeCursor, page);
+
+	const state = buildCompleteCapturedChatGptConversation(pageUrl);
+	if (state.kind !== "complete") return null;
+	latestConversation = state.conversation;
+	return state.conversation;
+}
+
+function buildChatGptHistoryPageUrl(
+	initialPage: ChatGptConversationPage,
+	beforeCursor: string,
+): string {
+	const initialUrl = new URL(initialPage.sourceApiUrl);
+	const historyUrl = new URL(
+		`/backend-api/conversations/${encodeURIComponent(initialPage.conversationId)}/messages`,
+		initialUrl,
+	);
+	historyUrl.searchParams.set("before", beforeCursor);
+	const includeHasVersions = initialUrl.searchParams.get(
+		"include_has_versions",
+	);
+	historyUrl.searchParams.set(
+		"include_has_versions",
+		includeHasVersions ?? "true",
+	);
+	const numTurns = initialUrl.searchParams.get("num_turns");
+	historyUrl.searchParams.set("num_turns", numTurns ?? "10");
+	return historyUrl.href;
+}
+
+async function ensureCompleteChatGptConversationForExport(
+	pageUrl: string,
+): Promise<Conversation | null> {
+	const initialPage = getChatGptInitialPageForPage(pageUrl);
+	if (!initialPage) return null;
+
+	while (true) {
+		if (currentUrl() !== pageUrl) return getActiveConversationForPage();
+		if (getChatGptInitialPageForPage(pageUrl) !== initialPage) {
+			throw new Error(
+				"ChatGPT chat data changed while older history was being loaded. Try exporting again.",
+			);
+		}
+
+		const state = buildCompleteCapturedChatGptConversation(pageUrl);
+		if (state.kind === "complete") {
+			latestConversation = state.conversation;
+			return state.conversation;
+		}
+		if (state.kind === "missing-initial") return null;
+		if (state.kind === "invalid") throw new Error(state.error);
+
+		const historyUrl = buildChatGptHistoryPageUrl(
+			initialPage,
+			state.beforeCursor,
+		);
+		const result = await chatGptPageFetch(historyUrl);
+		if (currentUrl() !== pageUrl) return getActiveConversationForPage();
+		if (!result.ok) {
+			const status = result.status > 0 ? ` HTTP ${result.status}` : "";
+			throw new Error(`ChatGPT conversation history request failed${status}.`);
+		}
+		if (!result.text.trim()) {
+			throw new Error("ChatGPT returned an empty conversation history page.");
+		}
+		const olderPage = parseChatGptConversationPage(
+			result.url || historyUrl,
+			result.text,
+		);
+		if (!olderPage) {
+			throw new Error(
+				"ChatGPT returned an unsupported conversation history response.",
+			);
+		}
+		if (olderPage.conversationId !== initialPage.conversationId) {
+			throw new Error("ChatGPT returned history data for a different chat.");
+		}
+		storeChatGptHistoryPage(olderPage, historyUrl, pageUrl);
+	}
+}
+
+function clearChatContentWait(conversationId: string) {
+	chatContentWaitStartedAt.delete(conversationId);
+	const timeoutId = chatContentWaitTimers.get(conversationId);
+	if (timeoutId) clearTimeout(timeoutId);
+	chatContentWaitTimers.delete(conversationId);
+}
+
+function clearAllChatContentWaits() {
+	for (const timeoutId of chatContentWaitTimers.values()) {
+		clearTimeout(timeoutId);
+	}
+	chatContentWaitTimers.clear();
+	chatContentWaitStartedAt.clear();
+}
+
 function syncPageState() {
 	const url = currentUrl();
 	if (url === lastPageUrl) return;
 	lastPageUrl = url;
 	latestConversation = null;
+	latestChatGptInitialPage = null;
+	chatGptHistoryPagesByBeforeCursor.clear();
 	latestProject = null;
-	chatGptTextdocsByConversation.clear();
-	observedChatGptConversationApis.clear();
-	observedChatGptTextdocs.clear();
-	chatGptTextdocsWaitStartedAt.clear();
-	chatGptConversationReadyWaiters.clear();
+	clearAllChatContentWaits();
 	projectExportStatus = null;
 	emitUiContextChanged();
-}
-
-function markObservedConversationApi(conversationId: string) {
-	observedChatGptConversationApis.add(conversationId);
-}
-
-function markObservedConversationTextdocs(conversationId: string) {
-	observedChatGptTextdocs.add(conversationId);
-	chatGptTextdocsWaitStartedAt.delete(conversationId);
-	flushChatGptConversationReadyWaiters();
-}
-
-function hasObservedConversationTextdocs(conversationId: string): boolean {
-	return observedChatGptTextdocs.has(conversationId);
-}
-
-function getChatGptTextdocsWaitStartedAt(conversationId: string): number {
-	const existing = chatGptTextdocsWaitStartedAt.get(conversationId);
-	if (typeof existing === "number") return existing;
-	const now = Date.now();
-	chatGptTextdocsWaitStartedAt.set(conversationId, now);
-	return now;
-}
-
-function hasChatGptTextdocsWaitTimedOut(conversationId: string): boolean {
-	return (
-		Date.now() - getChatGptTextdocsWaitStartedAt(conversationId) >=
-		CHATGPT_TEXTDOCS_WAIT_FALLBACK_MS
-	);
 }
 
 function conversationMatchesCurrentChat(
@@ -541,55 +723,27 @@ function conversationMatchesCurrentChat(
 	return sourceChatId === conversationId;
 }
 
-function isCurrentChatGptConversationReady(conversationId: string): boolean {
+function getChatContentWaitStartedAt(conversationId: string): number {
+	const existing = chatContentWaitStartedAt.get(conversationId);
+	if (typeof existing === "number") return existing;
+
+	const now = Date.now();
+	chatContentWaitStartedAt.set(conversationId, now);
+	const timeoutId = setTimeout(() => {
+		chatContentWaitTimers.delete(conversationId);
+		if (extractCurrentChatId(currentUrl()) === conversationId) {
+			emitUiContextChanged();
+		}
+	}, CHAT_CONTENT_WAIT_TIMEOUT_MS);
+	chatContentWaitTimers.set(conversationId, timeoutId);
+	return now;
+}
+
+function hasChatContentWaitTimedOut(conversationId: string): boolean {
 	return (
-		conversationMatchesCurrentChat(
-			getActiveConversationForPage(),
-			conversationId,
-		) && hasObservedConversationTextdocs(conversationId)
+		Date.now() - getChatContentWaitStartedAt(conversationId) >=
+		CHAT_CONTENT_WAIT_TIMEOUT_MS
 	);
-}
-
-function flushChatGptConversationReadyWaiters() {
-	for (const waiter of [...chatGptConversationReadyWaiters]) {
-		if (!isCurrentChatGptConversationReady(waiter.conversationId)) continue;
-		chatGptConversationReadyWaiters.delete(waiter);
-		waiter.resolve();
-	}
-}
-
-function waitForCurrentChatGptConversationReady(
-	conversationId: string,
-): Promise<Conversation | null> {
-	if (isCurrentChatGptConversationReady(conversationId)) {
-		return Promise.resolve(getActiveConversationForPage());
-	}
-	const remaining = Math.max(
-		0,
-		CHATGPT_TEXTDOCS_WAIT_FALLBACK_MS -
-			(Date.now() - getChatGptTextdocsWaitStartedAt(conversationId)),
-	);
-	if (remaining === 0) {
-		return Promise.resolve(getActiveConversationForPage());
-	}
-	return new Promise((resolve) => {
-		let settled = false;
-		let timeoutId: ReturnType<typeof setTimeout> | null = null;
-		const finish = () => {
-			if (settled) return;
-			settled = true;
-			if (timeoutId) clearTimeout(timeoutId);
-			chatGptConversationReadyWaiters.delete(waiter);
-			resolve(getActiveConversationForPage());
-		};
-		const waiter = {
-			conversationId,
-			resolve: finish,
-		};
-		chatGptConversationReadyWaiters.add(waiter);
-		timeoutId = setTimeout(finish, remaining);
-		flushChatGptConversationReadyWaiters();
-	});
 }
 
 function getCurrentChatGptLoadingState(): {
@@ -605,26 +759,34 @@ function getCurrentChatGptLoadingState(): {
 	const currentChatId = extractCurrentChatId(currentUrl());
 	if (!currentChatId) return { status: null, waiting: false };
 	const activeConversation = getActiveConversationForPage();
-	if (!conversationMatchesCurrentChat(activeConversation, currentChatId)) {
+	if (conversationMatchesCurrentChat(activeConversation, currentChatId)) {
+		clearChatContentWait(currentChatId);
+		return { status: null, waiting: false };
+	}
+
+	const capturedState = buildCompleteCapturedChatGptConversation(currentUrl());
+	if (
+		capturedState.kind === "complete" ||
+		capturedState.kind === "missing-history"
+	) {
+		clearChatContentWait(currentChatId);
+		return { status: null, waiting: false };
+	}
+	if (capturedState.kind === "invalid") {
+		clearChatContentWait(currentChatId);
+		return { status: capturedState.error, waiting: false };
+	}
+	if (hasChatContentWaitTimedOut(currentChatId)) {
 		return {
-			status: "Chat content are still loading, please wait...",
-			waiting: true,
+			status:
+				"Chat data was not intercepted within 20 seconds. Reload the chat page and try again.",
+			waiting: false,
 		};
 	}
-	if (!hasObservedConversationTextdocs(currentChatId)) {
-		if (hasChatGptTextdocsWaitTimedOut(currentChatId)) {
-			return {
-				status:
-					"Documents / canvas did not load in time. Export will continue without them.",
-				waiting: false,
-			};
-		}
-		return {
-			status: "Documents / canvas are still loading, please wait...",
-			waiting: true,
-		};
-	}
-	return { status: null, waiting: false };
+	return {
+		status: "Chat content are still loading, please wait...",
+		waiting: true,
+	};
 }
 
 function getCurrentChatGptProjectLoadingStatus(): string | null {
@@ -645,30 +807,24 @@ function handleRawCapture(message: RawCaptureMessage) {
 		lastClaudeOrgId = orgId;
 		void setLastClaudeOrgId(orgId).catch(() => undefined);
 	}
-	const conversation = parseConversation(
-		message.url,
-		message.text,
-		currentUrl(),
-	);
-	if (conversation) {
-		if (conversation.provider === "chatgpt") {
-			markObservedConversationApi(conversation.id);
+	const chatGptApiKind = getChatGptConversationApiKind(message.url);
+	const chatGptPage = parseChatGptConversationPage(message.url, message.text);
+	if (chatGptApiKind === "initial" && chatGptPage) {
+		storeChatGptInitialPage(chatGptPage, currentUrl());
+	} else if (chatGptApiKind === "messages" && chatGptPage) {
+		storeChatGptHistoryPage(chatGptPage, message.url, currentUrl());
+	} else if (chatGptApiKind !== "messages") {
+		const conversation = parseConversation(
+			message.url,
+			message.text,
+			currentUrl(),
+		);
+		if (conversation) {
+			latestConversation = conversation;
+			if (conversation.provider === "chatgpt") {
+				clearChatContentWait(conversation.id);
+			}
 		}
-		latestConversation = applyConversationTextdocs(conversation);
-		flushChatGptConversationReadyWaiters();
-	}
-	const textdocs = parseChatGptTextdocs(message.url, message.text);
-	if (textdocs) {
-		stashConversationTextdocs(textdocs.conversationId, textdocs.textdocs);
-		if (latestConversation) {
-			latestConversation = replaceConversationTextdocs(
-				latestConversation,
-				textdocs.conversationId,
-				textdocs.textdocs,
-			);
-		}
-		markObservedConversationTextdocs(textdocs.conversationId);
-		flushChatGptConversationReadyWaiters();
 	}
 	const project = parseProjectListing(message.url, message.text);
 	if (project) {
@@ -679,28 +835,6 @@ function handleRawCapture(message: RawCaptureMessage) {
 				: nextProject;
 	}
 	emitUiContextChanged();
-}
-
-function stashConversationTextdocs(
-	conversationId: string,
-	textdocs: import("../../lib/types").ChatGptTextdoc[],
-) {
-	const merged = mergeChatGptTextdocs(
-		chatGptTextdocsByConversation.get(conversationId),
-		textdocs,
-	);
-	if (merged && merged.length > 0) {
-		chatGptTextdocsByConversation.set(conversationId, [...merged]);
-		return;
-	}
-	chatGptTextdocsByConversation.delete(conversationId);
-}
-
-function applyConversationTextdocs(conversation: Conversation): Conversation {
-	if (conversation.provider !== "chatgpt") return conversation;
-	if (!chatGptTextdocsByConversation.has(conversation.id)) return conversation;
-	const textdocs = chatGptTextdocsByConversation.get(conversation.id) ?? [];
-	return replaceConversationTextdocs(conversation, conversation.id, textdocs);
 }
 
 function setProjectStatus(status: string | null, canSkip = false) {
@@ -760,6 +894,10 @@ function buildContext(waiting = false): UiContext {
 	const provider = inferProvider(currentUrl());
 	const pageKind = inferPageKind(currentUrl());
 	const activeConversation = getActiveConversationForPage();
+	const activeChatGptInitialPage =
+		provider === "chatgpt" && pageKind === "chat"
+			? getChatGptInitialPageForPage()
+			: null;
 	const activeProject = getActiveProjectForPage();
 	const chatLoadingState = getCurrentChatGptLoadingState();
 	const projectLoadingStatus = getCurrentChatGptProjectLoadingStatus();
@@ -770,10 +908,10 @@ function buildContext(waiting = false): UiContext {
 	return {
 		provider,
 		pageKind,
-		hasConversation: Boolean(activeConversation),
+		hasConversation: Boolean(activeConversation || activeChatGptInitialPage),
 		hasProject: Boolean(activeProject),
 		waiting: isLoading,
-		title: activeConversation?.title,
+		title: activeConversation?.title ?? activeChatGptInitialPage?.title,
 		projectName: activeProject?.projectName,
 		showFloatingButton,
 		projectExportStatus: projectExportStatus ?? loadingStatus,
@@ -784,85 +922,78 @@ function buildContext(waiting = false): UiContext {
 async function ensureActiveConversationForPage(
 	allowNetworkFallback = true,
 ): Promise<Conversation | null> {
+	const pageUrl = currentUrl();
+	const provider = inferProvider(pageUrl);
+
+	if (provider === "chatgpt" && inferPageKind(pageUrl) === "chat") {
+		const state = buildCompleteCapturedChatGptConversation(pageUrl);
+		if (state.kind === "complete") {
+			latestConversation = state.conversation;
+			return state.conversation;
+		}
+		if (state.kind === "invalid" || !allowNetworkFallback) return null;
+		return ensureCompleteChatGptConversationForExport(pageUrl);
+	}
+
 	const conversation = getActiveConversationForPage();
 	if (conversation) {
 		const enriched = await maybeEnrichClaudeConversationWithGeneratedDocuments(
 			conversation,
 			allowNetworkFallback,
 		);
-		if (enriched !== conversation) latestConversation = enriched;
-		return enriched;
-	}
-
-	if (inferPageKind(currentUrl()) === "chat") {
-		const observed = collectObservedApiUrls();
-		const provider = inferProvider(currentUrl());
-		const apiUrl =
-			provider === "chatgpt"
-				? buildChatGptCurrentConversationApiUrl(currentUrl(), observed)
-				: buildClaudeCurrentConversationApiUrl(
-						currentUrl(),
-						observed,
-						lastClaudeOrgId,
-					);
-		if (allowNetworkFallback && apiUrl) {
-			const orgId = extractClaudeOrgIdFromUrl(apiUrl);
-			if (orgId && orgId !== lastClaudeOrgId) {
-				lastClaudeOrgId = orgId;
-				void setLastClaudeOrgId(orgId).catch(() => undefined);
-			}
-			const result = await pageFetch(apiUrl).catch(() => null);
-			if (result?.ok && result.text.trim()) {
-				const parsed = parseConversation(apiUrl, result.text, currentUrl());
-				if (parsed) {
-					const nextConversation = applyConversationTextdocs(parsed);
-					latestConversation =
-						await maybeEnrichClaudeConversationWithGeneratedDocuments(
-							nextConversation,
-							allowNetworkFallback,
-						);
-				}
-			}
+		if (currentUrl() === pageUrl && enriched !== conversation) {
+			latestConversation = enriched;
 		}
+		return currentUrl() === pageUrl ? enriched : getActiveConversationForPage();
 	}
 
+	if (
+		provider !== "claude" ||
+		inferPageKind(pageUrl) !== "chat" ||
+		!allowNetworkFallback
+	) {
+		return getActiveConversationForPage();
+	}
+
+	const observed = collectObservedApiUrls();
+	const apiUrl = buildClaudeCurrentConversationApiUrl(
+		pageUrl,
+		observed,
+		lastClaudeOrgId,
+	);
+	if (!apiUrl) return getActiveConversationForPage();
+
+	const orgId = extractClaudeOrgIdFromUrl(apiUrl);
+	if (orgId && orgId !== lastClaudeOrgId) {
+		lastClaudeOrgId = orgId;
+		void setLastClaudeOrgId(orgId).catch(() => undefined);
+	}
+
+	const result = await pageFetch(apiUrl).catch(() => null);
+	if (currentUrl() !== pageUrl) return getActiveConversationForPage();
+	if (!result?.ok || !result.text.trim()) return getActiveConversationForPage();
+
+	const parsed = parseConversation(apiUrl, result.text, pageUrl);
+	if (!parsed) return getActiveConversationForPage();
+	const expectedChatId = extractCurrentChatId(pageUrl);
+	if (
+		expectedChatId &&
+		!conversationMatchesCurrentChat(parsed, expectedChatId)
+	) {
+		return getActiveConversationForPage();
+	}
+
+	const enriched = await maybeEnrichClaudeConversationWithGeneratedDocuments(
+		parsed,
+		allowNetworkFallback,
+	);
+	if (currentUrl() !== pageUrl) return getActiveConversationForPage();
+	latestConversation = enriched;
 	return getActiveConversationForPage();
 }
 
-async function waitForSingleChatConversationForExport(
-	requireDocumentsCanvas = true,
-): Promise<Conversation | null> {
-	if (inferProvider(currentUrl()) !== "chatgpt") {
-		return ensureActiveConversationForPage();
-	}
-	if (inferPageKind(currentUrl()) !== "chat") {
-		return ensureActiveConversationForPage();
-	}
-	const currentChatId = extractCurrentChatId(currentUrl());
-	if (!currentChatId) {
-		return ensureActiveConversationForPage(false);
-	}
-	const activeConversation = getActiveConversationForPage();
-	if (!requireDocumentsCanvas) {
-		if (conversationMatchesCurrentChat(activeConversation, currentChatId)) {
-			return activeConversation;
-		}
-		return ensureActiveConversationForPage();
-	}
-	if (conversationMatchesCurrentChat(activeConversation, currentChatId)) {
-		if (hasObservedConversationTextdocs(currentChatId)) {
-			return activeConversation;
-		}
-		return waitForCurrentChatGptConversationReady(currentChatId);
-	}
-	const conversation = await ensureActiveConversationForPage();
-	if (!conversationMatchesCurrentChat(conversation, currentChatId)) {
-		return conversation;
-	}
-	if (hasObservedConversationTextdocs(currentChatId)) {
-		return conversation;
-	}
-	return waitForCurrentChatGptConversationReady(currentChatId);
+async function waitForSingleChatConversationForExport(): Promise<Conversation | null> {
+	return ensureActiveConversationForPage();
 }
 
 async function ensureActiveProjectData(): Promise<ProjectListing | null> {
@@ -1002,7 +1133,7 @@ export async function getActiveConversationData(
 }
 
 export async function getActiveConversationForSelection(): Promise<Conversation | null> {
-	return waitForSingleChatConversationForExport(false);
+	return waitForSingleChatConversationForExport();
 }
 
 export async function getActiveProjectData(
@@ -1026,9 +1157,7 @@ export async function getRenderedChat(
 	selectedMessageIds?: string[],
 	includeDocumentsCanvas = true,
 ): Promise<string> {
-	const conversation = await waitForSingleChatConversationForExport(
-		includeDocumentsCanvas !== false,
-	);
+	const conversation = await waitForSingleChatConversationForExport();
 	if (!conversation) {
 		throw new Error("No chat data available.");
 	}
@@ -1037,7 +1166,8 @@ export async function getRenderedChat(
 		selectedMessageIds,
 	);
 	return buildConversationBundle(filteredConversation, format, new Date(), {
-		includeDocumentsCanvas,
+		includeDocumentsCanvas:
+			conversation.provider === "chatgpt" ? true : includeDocumentsCanvas,
 	}).mainContent;
 }
 
@@ -1047,9 +1177,7 @@ export async function exportChat(
 	selectedMessageIds?: string[],
 	includeDocumentsCanvas = true,
 ): Promise<void> {
-	const conversation = await waitForSingleChatConversationForExport(
-		includeDocumentsCanvas !== false,
-	);
+	const conversation = await waitForSingleChatConversationForExport();
 	if (!conversation) {
 		throw new Error("No chat data available.");
 	}
@@ -1064,7 +1192,8 @@ export async function exportChat(
 		new Date(),
 		{
 			nestAssetsUnderChatFolder: false,
-			includeDocumentsCanvas,
+			includeDocumentsCanvas:
+				conversation.provider === "chatgpt" ? true : includeDocumentsCanvas,
 		},
 	);
 	if (target === "clipboard") {
@@ -1191,7 +1320,8 @@ export async function exportProject(
 
 		for (const conversation of sorted) {
 			const prepared = buildConversationBundle(conversation, format, now, {
-				includeDocumentsCanvas,
+				includeDocumentsCanvas:
+					conversation.provider === "chatgpt" ? true : includeDocumentsCanvas,
 			});
 			zip.file(`${folderName}/${prepared.mainFilename}`, prepared.mainContent);
 			for (const canvas of prepared.canvases) {

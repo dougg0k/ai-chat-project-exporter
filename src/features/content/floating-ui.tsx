@@ -289,17 +289,7 @@ function FloatingApp(props: {
 
 	React.useEffect(() => props.subscribeContext(setContext), [props]);
 
-	const isDocumentsCanvasOnlyWait = React.useMemo(
-		() =>
-			(context.projectExportStatus ?? "").startsWith(
-				"Documents / canvas are still loading",
-			),
-		[context.projectExportStatus],
-	);
-
-	const actionDisabled =
-		busy ||
-		(context.waiting && (includeDocumentsCanvas || !isDocumentsCanvasOnlyWait));
+	const actionDisabled = busy || context.waiting;
 	const visibleStatus =
 		context.projectExportStatus ?? operationStatus ?? undefined;
 
@@ -518,10 +508,14 @@ function FloatingApp(props: {
 							setFormat(next);
 							void setPreferredExportFormat(next).catch(() => undefined);
 						}}
-						onToggleIncludeDocumentsCanvas={(next) => {
-							setIncludeDocumentsCanvasState(next);
-							void setIncludeDocumentsCanvas(next).catch(() => undefined);
-						}}
+						onToggleIncludeDocumentsCanvas={
+							context.provider === "claude"
+								? (next) => {
+										setIncludeDocumentsCanvasState(next);
+										void setIncludeDocumentsCanvas(next).catch(() => undefined);
+									}
+								: undefined
+						}
 						showFloatingButton={context.showFloatingButton}
 						includeDocumentsCanvas={includeDocumentsCanvas}
 						statusText={visibleStatus}

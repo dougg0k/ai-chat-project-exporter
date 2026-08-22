@@ -1,5 +1,9 @@
 import { APP_SOURCE } from "./constants";
-import { isRelevantProviderApiUrl } from "./provider-url";
+import {
+	isChatGptConversationUrl,
+	isRelevantProviderApiUrl,
+	matchChatGptConversationApiUrl,
+} from "./provider-url";
 import type { PageFetchResultMessage, RawCaptureMessage } from "./types";
 
 const pending = new Map<
@@ -54,7 +58,10 @@ export function onRawCapture(
 	return () => rawCaptureListeners.delete(listener);
 }
 
-export async function pageFetch(url: string): Promise<PageFetchResultMessage> {
+function requestPageFetch(
+	url: string,
+	type: "PAGE_FETCH_REQUEST" | "CHATGPT_PAGE_FETCH_REQUEST",
+): Promise<PageFetchResultMessage> {
 	const requestId = crypto.randomUUID();
 	const promise = new Promise<PageFetchResultMessage>((resolve, reject) => {
 		pending.set(requestId, { resolve, reject });
@@ -66,11 +73,38 @@ export async function pageFetch(url: string): Promise<PageFetchResultMessage> {
 		}, 20_000);
 	});
 
-	window.postMessage(
-		{ source: APP_SOURCE, type: "PAGE_FETCH_REQUEST", requestId, url },
-		"*",
-	);
+	window.postMessage({ source: APP_SOURCE, type, requestId, url }, "*");
 	return promise;
+}
+
+function resolvePageUrl(url: string): string {
+	try {
+		return new URL(url, window.location.href).href;
+	} catch {
+		return url;
+	}
+}
+
+export async function pageFetch(url: string): Promise<PageFetchResultMessage> {
+	if (isChatGptConversationUrl(resolvePageUrl(url))) {
+		throw new Error(
+			"ChatGPT conversation requests require the captured page request context.",
+		);
+	}
+	return requestPageFetch(url, "PAGE_FETCH_REQUEST");
+}
+
+export async function chatGptPageFetch(
+	url: string,
+): Promise<PageFetchResultMessage> {
+	const resolvedUrl = resolvePageUrl(url);
+	const match = matchChatGptConversationApiUrl(resolvedUrl);
+	if (!match || match.kind !== "messages") {
+		throw new Error(
+			"Only ChatGPT conversation history pages can be requested.",
+		);
+	}
+	return requestPageFetch(resolvedUrl, "CHATGPT_PAGE_FETCH_REQUEST");
 }
 
 export function collectObservedApiUrls(): string[] {

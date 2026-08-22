@@ -1,12 +1,45 @@
 import { defineContentScript } from "wxt/utils/define-content-script";
 import { APP_SOURCE, CONTENT_MATCHES } from "../lib/constants";
-import { isRelevantProviderApiUrl } from "../lib/provider-url";
+import {
+	isChatGptConversationUrl,
+	isRelevantProviderApiUrl,
+	matchChatGptConversationApiUrl,
+} from "../lib/provider-url";
+
+interface ChatGptRequestContext {
+	headers: [string, string][];
+	credentials: RequestCredentials;
+	cache: RequestCache;
+	redirect: RequestRedirect;
+	referrer: string;
+	referrerPolicy: ReferrerPolicy;
+	integrity: string;
+	keepalive: boolean;
+	mode: RequestMode;
+}
 
 export default defineContentScript({
 	matches: [...CONTENT_MATCHES],
 	runAt: "document_start",
 	world: "MAIN",
 	main() {
+		const chatGptRequestContexts = new Map<string, ChatGptRequestContext>();
+
+		const normalizeUrl = (value: string): string => {
+			try {
+				return new URL(value, window.location.href).href;
+			} catch {
+				return value;
+			}
+		};
+
+		const requestUrl = (input: RequestInfo | URL): string => {
+			if (typeof input === "string") return normalizeUrl(input);
+			if (input instanceof Request) return normalizeUrl(input.url);
+			if (input instanceof URL) return input.href;
+			return "";
+		};
+
 		const emitCapture = (url: string, text: string) => {
 			window.postMessage(
 				{ source: APP_SOURCE, type: "RAW_CAPTURE", url, text },
@@ -37,24 +70,54 @@ export default defineContentScript({
 
 		const captureText = (url: string, text: string) => {
 			try {
-				if (!isRelevantProviderApiUrl(url)) return;
-				if (typeof text === "string" && text.trim()) emitCapture(url, text);
+				const normalizedUrl = normalizeUrl(url);
+				if (!isRelevantProviderApiUrl(normalizedUrl)) return;
+				if (typeof text === "string" && text.trim()) {
+					emitCapture(normalizedUrl, text);
+				}
 			} catch {
 				// ignore
 			}
 		};
 
+		const rememberChatGptRequestContext = (
+			input: RequestInfo | URL,
+			init: RequestInit | undefined,
+			url: string,
+		) => {
+			const match = matchChatGptConversationApiUrl(url);
+			if (!match || match.kind === "legacy") return;
+			try {
+				const request =
+					input instanceof Request
+						? new Request(input, init)
+						: new Request(url, init);
+				if (request.method.toUpperCase() !== "GET") return;
+				const headers: [string, string][] = [];
+				request.headers.forEach((value, name) => headers.push([name, value]));
+				chatGptRequestContexts.set(match.conversationId, {
+					headers,
+					credentials: request.credentials,
+					cache: request.cache,
+					redirect: request.redirect,
+					referrer: request.referrer,
+					referrerPolicy: request.referrerPolicy,
+					integrity: request.integrity,
+					keepalive: request.keepalive,
+					mode: request.mode,
+				});
+			} catch {
+				// A captured response can still be exported if no older page is needed.
+			}
+		};
+
 		const originalFetch = window.fetch;
 		window.fetch = async (...args) => {
+			const url = requestUrl(args[0]);
+			if (url) rememberChatGptRequestContext(args[0], args[1], url);
+
 			const response = await originalFetch(...args);
 			try {
-				const request = args[0];
-				const url =
-					typeof request === "string"
-						? request
-						: request instanceof Request
-							? request.url
-							: "";
 				if (url && isRelevantProviderApiUrl(url)) {
 					const clone = response.clone();
 					const text = await clone.text();
@@ -77,7 +140,7 @@ export default defineContentScript({
 				username?: string | null,
 				password?: string | null,
 			): void {
-				this.__captureUrl = String(url);
+				this.__captureUrl = normalizeUrl(String(url));
 				super.open(
 					method,
 					url,
@@ -125,10 +188,59 @@ export default defineContentScript({
 			if (event.source !== window) return;
 			const data = event.data;
 			if (!data || data.source !== APP_SOURCE) return;
-			if (data.type !== "PAGE_FETCH_REQUEST") return;
+			if (
+				data.type !== "PAGE_FETCH_REQUEST" &&
+				data.type !== "CHATGPT_PAGE_FETCH_REQUEST"
+			)
+				return;
+
+			const normalizedUrl = normalizeUrl(String(data.url ?? ""));
+
+			if (data.type === "CHATGPT_PAGE_FETCH_REQUEST") {
+				const match = matchChatGptConversationApiUrl(normalizedUrl);
+				if (!match || match.kind !== "messages") {
+					emitFetchResult(data.requestId, normalizedUrl, false, 0, "");
+					return;
+				}
+				const context = chatGptRequestContexts.get(match.conversationId);
+				if (!context) {
+					emitFetchResult(data.requestId, normalizedUrl, false, 0, "");
+					return;
+				}
+				try {
+					const response = await originalFetch(normalizedUrl, {
+						method: "GET",
+						headers: context.headers,
+						credentials: context.credentials,
+						cache: context.cache,
+						redirect: context.redirect,
+						referrer: context.referrer,
+						referrerPolicy: context.referrerPolicy,
+						integrity: context.integrity,
+						keepalive: context.keepalive,
+						mode: context.mode,
+					});
+					const text = await response.text();
+					emitFetchResult(
+						data.requestId,
+						normalizedUrl,
+						response.ok,
+						response.status,
+						text,
+					);
+				} catch {
+					emitFetchResult(data.requestId, normalizedUrl, false, 0, "");
+				}
+				return;
+			}
+
+			if (isChatGptConversationUrl(normalizedUrl)) {
+				emitFetchResult(data.requestId, normalizedUrl, false, 0, "");
+				return;
+			}
 
 			try {
-				const response = await originalFetch(data.url, {
+				const response = await originalFetch(normalizedUrl, {
 					method: "GET",
 					credentials: "include",
 					headers: { accept: "application/json, text/plain, */*" },
@@ -136,13 +248,13 @@ export default defineContentScript({
 				const text = await response.text();
 				emitFetchResult(
 					data.requestId,
-					data.url,
+					normalizedUrl,
 					response.ok,
 					response.status,
 					text,
 				);
 			} catch {
-				emitFetchResult(data.requestId, data.url, false, 0, "");
+				emitFetchResult(data.requestId, normalizedUrl, false, 0, "");
 			}
 		});
 	},

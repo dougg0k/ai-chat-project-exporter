@@ -1,5 +1,6 @@
 import type { PageKind, ProjectListing, ProviderName } from "./types";
 import {
+	extractChatGptConversationIdFromApiUrl,
 	isChatGptProjectUrl,
 	isClaudeProjectUrl,
 	isClaudeConversationUrl,
@@ -130,19 +131,31 @@ export function buildCurrentProjectListingUrl(
 	return null;
 }
 
+export function buildChatGptCurrentConversationApiUrls(
+	currentChatPageUrl: string,
+	observedApiUrls: string[],
+): string[] {
+	const chatId = extractCurrentChatId(currentChatPageUrl);
+	if (!chatId) return [];
+
+	const observed = observedApiUrls.filter(
+		(url) => extractChatGptConversationIdFromApiUrl(url) === chatId,
+	);
+	const legacy = `https://chatgpt.com/backend-api/conversation/${chatId}`;
+	const current = `https://chatgpt.com/backend-api/conversations/${chatId}?include_has_versions=true&num_turns=10`;
+	return Array.from(new Set([...observed, current, legacy]));
+}
+
 export function buildChatGptCurrentConversationApiUrl(
 	currentChatPageUrl: string,
 	observedApiUrls: string[],
 ): string | null {
-	const observed = observedApiUrls.find((url) =>
-		/^https:\/\/chatgpt\.com\/backend-api\/conversation\/[A-Za-z0-9-]+(?:\?.*)?$/.test(
-			url,
-		),
+	return (
+		buildChatGptCurrentConversationApiUrls(
+			currentChatPageUrl,
+			observedApiUrls,
+		)[0] ?? null
 	);
-	if (observed) return observed;
-	const chatId = extractCurrentChatId(currentChatPageUrl);
-	if (!chatId) return null;
-	return `https://chatgpt.com/backend-api/conversation/${chatId}`;
 }
 
 export function buildClaudeCurrentConversationApiUrl(
